@@ -1,0 +1,6 @@
+__pycache__
+*.db
+*.ini
+/credentials.json
+/env
+/secret_key

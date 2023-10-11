@@ -1,0 +1,33 @@
+<html>
+<head>
+	<title>Active sessions for kent.slaney.org</title>
+</head>
+<body>
+	{% for session in active %}
+		<div>
+			<a target="_blank" href="https://www.find-ip.net/ip-locator?ip={{ session['ip'] }}">{{ session['ip'] }}</a>
+			last seen at {{ session['authtime'] }}.
+			{% if session['current'] %}
+				<a href="/login/logout">Logout</a> (current session)
+			{% else %}
+				<a class="deauthorize" token="{{ session['token'] }}" href="#">Deauthorize session</a>
+			{% endif %}
+		</div>
+	{% endfor %}
+	<script type="text/javascript">
+		links = document.body.getElementsByClassName("deauthorize");
+		for (var i = 0; i < links.length; i++) {
+			links[i].onclick = function(e) {
+				var xhr = new XMLHttpRequest(), row = this.parentElement;
+				xhr.open("POST", "/login/deauthorize/" + this.getAttribute("token"), true);
+				xhr.onreadystatechange = function() {
+					console.log(this.readyState)
+					if (this.readyState == 4) row.parentElement.removeChild(row);
+				}
+				xhr.send();
+				e.preventDefault()
+			}
+		}
+	</script>
+</body>
+</html>
