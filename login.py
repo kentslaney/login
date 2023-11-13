@@ -6,13 +6,14 @@ from flask_dance.contrib.github import github, make_github_blueprint
 from flask_dance.consumer import oauth_before_login, oauth_authorized
 from flask_dance.consumer.storage import BaseStorage
 from flask_dance.utils import FakeCache
+from test import test, make_test_blueprint
 
 # TODO: https://github.com/singingwolfboy/flask-dance/issues/418
 methods = {
     "google": (google, make_google_blueprint, None),
     "facebook": (facebook, make_facebook_blueprint, None),
     "github": (github, make_github_blueprint, None),
-    # TODO: localhost test framework?
+    "test": (test, make_test_blueprint, None)
 }
 
 def get_next():
@@ -50,6 +51,8 @@ def userlookup(method):
     elif method == "github":
         return remap(github.get("/user").json(), {
             "id": "node_id", "name": "name", "picture": "avatar_url"})
+    elif method == "test":
+        return test.get()
 
 def authorized():
     method = session.get("method", None)
@@ -64,8 +67,6 @@ def remap(old, mapping):
             r = r if r is None else r.get(i, None)
         res[k] = r
     return res
-
-proxied_ip = lambda r: r.remote_addr
 
 class DBStore(BaseStorage):
     def __init__(self, db, method, cache=None, timeout=None):
@@ -90,11 +91,11 @@ class DBStore(BaseStorage):
             "picture=excluded.picture",
             (self.method, info["id"], info["name"], info["picture"], encoded, uniq))
         if uid is None:
-            uniq = uid if uid is not None else self.db.query(
+            uniq = uid if uid is not None else self.db.queryone(
                 "SELECT uuid FROM auths WHERE method = ? AND platform_id = ?",
-                (self.method, info["id"]), one=True)[0]
+                (self.method, info["id"]))[0]
 
-        secret, authtime, ip = secrets.token_urlsafe(32), int(time.time()), proxied_ip(request)
+        secret, authtime, ip = secrets.token_urlsafe(32), int(time.time()), request.remote_addr
         session["user"], session["token"] = uniq, secret
         session["name"], session["picture"] = info["name"], info["picture"]
         self.db.execute("INSERT INTO active(uuid, token, ip, authtime) VALUES (?, ?, ?, ?)",
@@ -107,10 +108,10 @@ class DBStore(BaseStorage):
 
         cached = self.cache.get(session["token"])
         if cached is None:
-            info = self.db.query(
+            info = self.db.queryone(
                 "SELECT auths.token, active.ip, active.authtime FROM active "
                 "LEFT JOIN auths WHERE active.token = ?",
-                (session["token"],), True)
+                (session["token"],))
             if info is None:
                 session.clear()
                 return None
@@ -123,7 +124,7 @@ class DBStore(BaseStorage):
         if self.timeout and int(time.time()) - authtime > self.timeout:
             return None
 
-        current_ip = proxied_ip(request)
+        current_ip = request.remote_addr
         if ip != current_ip:
             self.db.execute("UPDATE active SET ip = ? WHERE token = ?",
                 (current_ip, session["token"]))

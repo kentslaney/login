@@ -1,16 +1,17 @@
 import json, os.path
 from flask import Flask, request, redirect, session, current_app, url_for, abort, render_template
-from database import database
+from store import Database, relpath
 from functools import wraps
 from flask_caching import Cache
 from login import methods, authorized, DBStore
 from flask_dance.consumer.requests import OAuth2Session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # create the minimal app context so that other apps can push it to the stack and
 # check the login status of the request
-relpath = lambda *args: os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
 app = Flask(__name__)
-db = database(app, relpath("users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
+app.wsgi_app = ProxyFix(app.wsgi_app)
+db = Database(app, relpath("users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
 cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
 app.session_cookie_name = "login"
@@ -24,8 +25,11 @@ except FileNotFoundError:
         f.write(secret)
         app.secret_key = secret
 
-with open(relpath("credentials.json")) as f:
-    oauth = json.load(f)
+try:
+    with open(relpath("credentials.json")) as f:
+        oauth = json.load(f)
+except FileNotFoundError:
+    oauth = {name: {"id": "", "secret": ""} for name in methods.keys()}
 
 stores, blueprints = {}, {}
 for name, (_, factory, scope) in methods.items():
@@ -42,9 +46,9 @@ for name, (_, factory, scope) in methods.items():
 @app.route("/login/")
 def login():
     if not authorized():
-        url = request.args.get("next", "/")
-        return render_template("login.html",
-            **{name: url_for(method.name + ".login", next=url)
+        url = {"next": request.args["next"]} if "next" in request.args else {}
+        return render_template("login.html", debug=app.debug,
+            **{name: url_for(method.name + ".login", **url)
                 for name, method in blueprints.items()})
     return redirect("/")
 

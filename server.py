@@ -1,20 +1,7 @@
 import datetime
 from utils import app, db, login_required, deauthorize
-from flask import redirect, session, request, render_template, url_for
+from flask import redirect, session, request, render_template, url_for, abort
 from login import authorized
-
-# fixes request protocol after proxy_pass to http
-class ReverseProxied(object):
-    def __init__(self, app):
-        self.app = app
-
-    def __call__(self, environ, start_response):
-        scheme = environ.get('HTTP_X_FORWARDED_PROTO')
-        if scheme:
-            environ['wsgi.url_scheme'] = scheme
-        return self.app(environ, start_response)
-
-app.wsgi_app = ReverseProxied(app.wsgi_app)
 
 @app.route("/login/<method>/continue")
 def done(method):
@@ -23,7 +10,7 @@ def done(method):
 @app.route("/login/sessions")
 @login_required("user")
 def active(user):
-    active = [dict(zip(["token", "ip", "authtime"], sess)) for sess in db.query(
+    active = [dict(zip(["token", "ip", "authtime"], sess)) for sess in db.queryall(
         "SELECT token, ip, authtime FROM active WHERE uuid = ?",
         (user["id"],))]
     for sess in active:
@@ -46,4 +33,4 @@ def kick(token, user):
     return ""
 
 if __name__ == "__main__":
-    app.run(port=8972)
+    app.run(port=8972, debug=True)
