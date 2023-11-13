@@ -13,6 +13,6 @@ CREATE TABLE active (
 	token TEXT,
 	ip TEXT,
 	authtime FLOAT,
-	FOREIGN KEY(uuid) REFERENCES auths(uuid)
+	FOREIGN KEY(uuid) REFERENCES auths(uuid) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX activities ON active(token);

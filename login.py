@@ -133,8 +133,13 @@ class DBStore(BaseStorage):
         return json.loads(token)
 
     def delete(self, blueprint):
-        # TODO
-        pass
+        if "user" not in session:
+            return None
+
+        for (token,) in self.db.queryall("SELECT token FROM active WHERE uuid = ?", (session["user"],)):
+            self.cache.delete(token)
+
+        self.db.execute("DELETE FROM auths WHERE uuid = ?", (session["user"],))
 
     def deauthorize(self, user, token):
         self.db.execute("DELETE FROM active WHERE uuid = ? AND token = ?", (user, token,))
