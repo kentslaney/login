@@ -12,6 +12,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
 db = Database(app, relpath("users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
+# https://github.com/memcached/memcached/wiki/ConfiguringServer#unix-sockets
+# remember TLS for all sensitive ISP traffic, see: MUSCULAR
 cache = Cache(app, config={'CACHE_TYPE': 'simple'})
 
 app.session_cookie_name = "login"
