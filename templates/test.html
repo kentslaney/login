@@ -2,12 +2,12 @@
     <input type="text" id="who" placeholder="{{ ip }}" />
     <input type="button" value="login" id="submit" />
     <script type="text/javascript">
-        document.getElementById("submit").addEventListener("click", () => {
-            who = document.getElementById("who")
-            user = who.value || who.getAttribute("placeholder")
-            next = new URL("{{ next }}", window.location.href)
-            next.searchParams.append("who", user)
-            window.location.href = next
-        })
+        document.getElementById("submit").addEventListener("click", (function(){
+            who = document.getElementById("who");
+            user = who.value || who.getAttribute("placeholder");
+            next = new URL("{{ next }}", window.location.href);
+            next.searchParams.append("who", user);
+            window.location.href = next;
+        }))
     </script>
 </html>
