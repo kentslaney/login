@@ -4,7 +4,6 @@ from store import Database, relpath
 from functools import wraps
 from flask_caching import Cache
 from login import methods, authorized, DBStore
-from flask_dance.consumer.requests import OAuth2Session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # create the minimal app context so that other apps can push it to the stack and
@@ -14,7 +13,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app)
 db = Database(app, relpath("users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
 # https://github.com/memcached/memcached/wiki/ConfiguringServer#unix-sockets
 # remember TLS for all sensitive ISP traffic, see: MUSCULAR
-cache = Cache(app, config={'CACHE_TYPE': 'simple'})
+cache = Cache(app, config={'CACHE_TYPE': 'store.threaded_client'})
 
 app.session_cookie_name = "login"
 try:

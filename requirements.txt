@@ -3,3 +3,4 @@ flask-dance
 blinker
 flask-caching
 uwsgi
+libmc @ git+https://github.com/kentslaney/libmc

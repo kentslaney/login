@@ -3,4 +3,5 @@ __pycache__
 *.ini
 /credentials.json
 /env
+/venv
 /secret_key

@@ -62,3 +62,13 @@ class Database(HeadlessDB):
 
         self.app = app
         app.teardown_appcontext(lambda e: self.close())
+
+from flask_caching.backends.memcache import MemcachedCache
+
+class ThreadedMemcached(MemcachedCache):
+    def import_preferred_memcache_lib(self, servers):
+        import libmc
+        return libmc.ThreadedClient(servers, hash_fn=libmc.MC_HASH_FNV1_32)
+
+def threaded_client(app, config, args, kwargs):
+    return ThreadedMemcached.factory(app, config, args, kwargs)
