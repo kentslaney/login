@@ -17,17 +17,17 @@ end_local()
 app = Flask(__name__)
 app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
-db = Database(app, relpath("users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
+db = Database(app, relpath("..", "users.db"), relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
 # https://github.com/memcached/memcached/wiki/ConfiguringServer#unix-sockets
 # remember TLS for all sensitive ISP traffic, see: MUSCULAR
 cache = Cache(app, config={'CACHE_TYPE': 'store.threaded_client'})
 
 try:
-    with open(relpath("secret_key"), "rb") as f:
+    with open(relpath("..", "secret_key"), "rb") as f:
         app.secret_key = f.read()
 except FileNotFoundError:
     import os
-    with open(relpath("secret_key"), "wb") as f:
+    with open(relpath("..", "secret_key"), "wb") as f:
         secret = os.urandom(24)
         f.write(secret)
         app.secret_key = secret
