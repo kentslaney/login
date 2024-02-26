@@ -1,4 +1,4 @@
-## Usage
+## Usage as a Service
 Add a `credentials.json` to the root directory of this project, in the form
 ```json
 {
@@ -28,17 +28,42 @@ into, in which case the `site-packages` path will look like
 For in the server code for the client project, login requirements can now be
 specified using
 ```python
-from flask_modular_login import login_required
+import flask
+from flask_modular_login import login_required, login_optional
 
-@login_required
-def route():
-    # only logged in users can access this route, others redirected by flask
-    ...
+app = flask.Flask(__name__)
 
+@app.route("/user_info/<str:kind>")
 @login_required("user")
-def protected_or_user_info(user):
-    # user now contains keys id, name, picture
+def protected_or_user_info(kind, user):
+    # only logged in users can access this route, others redirected by flask
+    # user argument now contains keys id, name, picture
     ...
+
+@app.route("/protected")
+@login_required
+def protected():
+    # same as before, but the user info is now stored in flask.g.user
+    ...
+
+@app.route("/profile_api")
+@login_optional("user")
+def profile(user=None):
+    # login optional can be used when logged out users shouldn't see a redirect
+    ...
+
+bp = flask.Blueprint("private", __name__, url_prefix="/private")
+login_required(bp) # returns bp, could be integrated into line above
+
+@bp.route("/page")
+def page():
+    # user info in flask.g.user, access limited to logged in users
+    ...
+
+app.register_blueprint(bp) # login_required call could also be here
+
+if __name__ == "__main__":
+    app.run(port=8080)
 ```
 
 Note that this project only works if the two project URLs share cookies. If the
@@ -56,6 +81,8 @@ or
 from flask_modular_login import login_required
 
 login_required.prefix = "//example.com/path/prefix"
+# this will modify the default object for both login_required and login_optional
+# for all submodules as well
 ```
 
 You can then use `login_required` as you normally would.
@@ -99,8 +126,8 @@ location @login {
 ```
 
 ## TODOs
-- login_required for blueprints
-- invite links
+- enable single project setups
+- invite links (what if an existing user clames the invite?)
 - alternate language bindings
 - conform to PEP8, specifically a reasonable character limit
 - flask-dance implementation for apple OAuth

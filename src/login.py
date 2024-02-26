@@ -1,6 +1,5 @@
-
 import json, time, secrets, uuid, urllib.parse
-from flask import session, request, url_for, redirect
+import flask
 from flask_dance.contrib.google import google, make_google_blueprint
 from flask_dance.contrib.facebook import facebook, make_facebook_blueprint
 from flask_dance.contrib.github import github, make_github_blueprint
@@ -8,11 +7,12 @@ from flask_dance.consumer import oauth_before_login, oauth_authorized
 from flask_dance.consumer.storage import BaseStorage
 from flask_dance.utils import FakeCache
 
-import sys, os.path; start_local, end_local = (lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__))), lambda: sys.path.pop(0)
+import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
+    lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from test import test, make_test_blueprint
 
-end_local()
+end_locals()
 
 methods = {
     "google": (google, make_google_blueprint, None),
@@ -23,28 +23,28 @@ methods = {
 
 def get_next():
     try:
-        return json.loads(session.get("next", "{}"))
+        return json.loads(flask.session.get("next", "{}"))
     except json.JSONDecodeError:
         return {}
 
 def store_next(stored):
-    session["next"] = json.dumps(stored)
+    flask.session["next"] = json.dumps(stored)
 
 @oauth_before_login.connect
 def before_login(blueprint, url):
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url)[4])["state"][0]
     stored = get_next()
-    stored[state] = request.args.get("next", "/")
+    stored[state] = flask.request.args.get("next", "/")
     store_next(stored)
 
 @oauth_authorized.connect
 def logged_in(blueprint, token):
-    state = request.args["state"]
+    state = flask.request.args["state"]
     stored = get_next()
     next_url = stored.pop(state, "/")
     store_next(stored)
     blueprint.token = token
-    return redirect(next_url)
+    return flask.redirect(next_url)
 
 def userlookup(method):
     if method == "google":
@@ -60,7 +60,7 @@ def userlookup(method):
         return test.get()
 
 def authorized(login_session=None):
-    login_session = login_session or session
+    login_session = login_session or flask.session
     method = login_session.get("method", None)
     if method in methods:
         return methods[method][0].authorized
@@ -79,7 +79,7 @@ class DBStore(BaseStorage):
         super().__init__()
         self.db, self.method, self.timeout = db, method, timeout
         self.cache = cache or FakeCache()
-        self.session = login_session or (lambda: session)
+        self.session = login_session or (lambda: flask.session)
 
     def set(self, blueprint, token):
         _session = self.session()
@@ -103,7 +103,7 @@ class DBStore(BaseStorage):
                 "SELECT uuid FROM auths WHERE method = ? AND platform_id = ?",
                 (self.method, info["id"]))[0]
 
-        secret, authtime, ip = secrets.token_urlsafe(32), int(time.time()), request.remote_addr
+        secret, authtime, ip = secrets.token_urlsafe(32), int(time.time()), flask.request.remote_addr
         _session["user"], _session["token"] = uniq, secret
         _session["name"], _session["picture"] = info["name"], info["picture"]
         self.db.execute("INSERT INTO active(uuid, token, ip, authtime) VALUES (?, ?, ?, ?)",
@@ -133,7 +133,7 @@ class DBStore(BaseStorage):
         if self.timeout and int(time.time()) - authtime > self.timeout:
             return None
 
-        current_ip = request.remote_addr
+        current_ip = flask.request.remote_addr
         if ip != current_ip:
             self.db.execute("UPDATE active SET ip = ? WHERE token = ?",
                 (current_ip, _session["token"]))

@@ -5,7 +5,7 @@ def relpath(*args):
 
 # http://flask.pocoo.org/docs/0.11/patterns/sqlite3/
 import sqlite3
-from flask import g
+import flask
 
 class HeadlessDB:
     def __init__(self, database, init=[]):
@@ -14,9 +14,9 @@ class HeadlessDB:
 
     # returns a database connection
     def get(self):
-        db = getattr(g, "_database", None)
+        db = getattr(flask.g, "_auth_database", None)
         if db is None:
-            db = g._database = sqlite3.connect(self.database)
+            db = flask.g._auth_database = sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
         return db
@@ -43,7 +43,7 @@ class HeadlessDB:
         return res or None
 
     def close(self):
-        db = getattr(g, '_database', None)
+        db = getattr(flask.g, '_auth_database', None)
         if db is not None:
              db.close()
 
