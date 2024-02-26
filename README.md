@@ -1,13 +1,4 @@
-## TODOs
-- invite links
-- login_required for blueprints
-- alternate language bindings
-- conform to PEP8, specifically a reasonable character limit
-
-(duplicated from login.py)
-- flask-dance implementation for apple OAuth
-
-## usage
+## Usage
 Add a `credentials.json` to the root directory of this project, in the form
 ```json
 {
@@ -20,9 +11,10 @@ server in debug mode will add a "test" login option.
 Next, start the caching service and server via
 ```bash
 $ memcached -d
-$ source env/bin/activate
+$ source venv/bin/activate # assuming you have one
 $ python server.py
 ```
+
 In the client project with a login requirement, install the local copy of this
 repo using
 ```bash
@@ -69,7 +61,48 @@ login_required.prefix = "//example.com/path/prefix"
 You can then use `login_required` as you normally would.
 
 For the default `server.py` setup, when run as a script, `prefix` should be
-`"//localhost:8972"`, and the only working login option will be `test` until
+`"//localhost:8972"`, and the only working login option will be "test" until
 the server is running on externally visable URLs for OAuth services to redirect
 to. By default, `server.py` runs on debug mode, so be careful to change that
 as whell when updating `host` for external visibility.
+
+When deploying, it's also recommended to use a WSGI server, which can be
+configured using a `.ini` file. It has been excluded from this repo since it's
+fairly platform dependent, but here is an example implementation for reference
+```
+[uwsgi]
+module = wsgi
+master = true
+
+socket = /tmp/flask_modular_login.sock
+chmod-socket = 666
+vacuum = true
+die-on-term = true
+
+chdir = [path to src]
+module = server:app
+processes = 4
+threads = 2
+```
+which is then run using
+```bash
+$ uwsgi --ini uwsgi.ini
+```
+The correspoinding Nginx setup should look like
+```
+location = /login { rewrite ^ /login/; }
+location /login { try_files $uri @login; }
+location @login {
+        include uwsgi_params;
+        uwsgi_pass unix:/tmp/flask_modular_login.sock;
+}
+```
+
+## TODOs
+- login_required for blueprints
+- invite links
+- alternate language bindings
+- conform to PEP8, specifically a reasonable character limit
+- flask-dance implementation for apple OAuth
+([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
+[Reference implementation](https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))

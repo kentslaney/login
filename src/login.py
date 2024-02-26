@@ -14,8 +14,6 @@ from test import test, make_test_blueprint
 
 end_local()
 
-# TODO: https://github.com/singingwolfboy/flask-dance/issues/418
-# https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py
 methods = {
     "google": (google, make_google_blueprint, None),
     "facebook": (facebook, make_facebook_blueprint, None),
