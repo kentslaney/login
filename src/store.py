@@ -1,8 +1,10 @@
+import os.path
+
 def relpath(*args):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
 
 # http://flask.pocoo.org/docs/0.11/patterns/sqlite3/
-import sqlite3, os.path
+import sqlite3
 from flask import g
 
 class HeadlessDB:

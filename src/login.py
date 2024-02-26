@@ -1,3 +1,4 @@
+
 import json, time, secrets, uuid, urllib.parse
 from flask import session, request, url_for, redirect
 from flask_dance.contrib.google import google, make_google_blueprint
@@ -6,7 +7,12 @@ from flask_dance.contrib.github import github, make_github_blueprint
 from flask_dance.consumer import oauth_before_login, oauth_authorized
 from flask_dance.consumer.storage import BaseStorage
 from flask_dance.utils import FakeCache
+
+import sys, os.path; start_local, end_local = (lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__))), lambda: sys.path.pop(0)
+
 from test import test, make_test_blueprint
+
+end_local()
 
 # TODO: https://github.com/singingwolfboy/flask-dance/issues/418
 # https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py
@@ -55,8 +61,9 @@ def userlookup(method):
     elif method == "test":
         return test.get()
 
-def authorized():
-    method = session.get("method", None)
+def authorized(login_session=None):
+    login_session = login_session or session
+    method = login_session.get("method", None)
     if method in methods:
         return methods[method][0].authorized
 
@@ -70,13 +77,15 @@ def remap(old, mapping):
     return res
 
 class DBStore(BaseStorage):
-    def __init__(self, db, method, cache=None, timeout=None):
+    def __init__(self, db, method, cache=None, login_session=None, timeout=None):
         super().__init__()
         self.db, self.method, self.timeout = db, method, timeout
         self.cache = cache or FakeCache()
+        self.session = login_session or (lambda: session)
 
     def set(self, blueprint, token):
-        session["method"] = self.method
+        _session = self.session()
+        _session["method"] = self.method
         info = userlookup(self.method)
         encoded = json.dumps(token)
         uniq = str(uuid.uuid4())
@@ -97,28 +106,29 @@ class DBStore(BaseStorage):
                 (self.method, info["id"]))[0]
 
         secret, authtime, ip = secrets.token_urlsafe(32), int(time.time()), request.remote_addr
-        session["user"], session["token"] = uniq, secret
-        session["name"], session["picture"] = info["name"], info["picture"]
+        _session["user"], _session["token"] = uniq, secret
+        _session["name"], _session["picture"] = info["name"], info["picture"]
         self.db.execute("INSERT INTO active(uuid, token, ip, authtime) VALUES (?, ?, ?, ?)",
             (uniq, secret, ip, authtime))
         self.cache.set(secret, (encoded, ip, authtime))
 
     def get(self, blueprint):
-        if "token" not in session:
+        _session = self.session()
+        if "token" not in _session:
             return None
 
-        cached = self.cache.get(session["token"])
+        cached = self.cache.get(_session["token"])
         if cached is None:
             info = self.db.queryone(
                 "SELECT auths.token, active.ip, active.authtime FROM active "
                 "LEFT JOIN auths WHERE active.token = ?",
-                (session["token"],))
+                (_session["token"],))
             if info is None:
-                session.clear()
+                _session.clear()
                 return None
 
             token, ip, authtime = info
-            self.cache.set(session["token"], (token, ip, authtime))
+            self.cache.set(_session["token"], (token, ip, authtime))
         else:
             token, ip, authtime = cached
 
@@ -128,19 +138,20 @@ class DBStore(BaseStorage):
         current_ip = request.remote_addr
         if ip != current_ip:
             self.db.execute("UPDATE active SET ip = ? WHERE token = ?",
-                (current_ip, session["token"]))
-            self.cache.set(session["token"], (token, current_ip, authtime))
+                (current_ip, _session["token"]))
+            self.cache.set(_session["token"], (token, current_ip, authtime))
 
         return json.loads(token)
 
     def delete(self, blueprint):
-        if "user" not in session:
+        _session = self.session()
+        if "user" not in _session:
             return None
 
-        for (token,) in self.db.queryall("SELECT token FROM active WHERE uuid = ?", (session["user"],)):
+        for (token,) in self.db.queryall("SELECT token FROM active WHERE uuid = ?", (_session["user"],)):
             self.cache.delete(token)
 
-        self.db.execute("DELETE FROM auths WHERE uuid = ?", (session["user"],))
+        self.db.execute("DELETE FROM auths WHERE uuid = ?", (_session["user"],))
 
     def deauthorize(self, user, token):
         self.db.execute("DELETE FROM active WHERE uuid = ? AND token = ?", (user, token,))

@@ -1,7 +1,11 @@
 import datetime
-from utils import app, db, login_required, deauthorize
 from flask import redirect, session, request, render_template, url_for, abort
-from login import authorized
+
+import sys, os.path; start_local, end_local = (lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__))), lambda: sys.path.pop(0)
+
+from utils import app, db, login_required, deauthorize
+
+end_local()
 
 @app.route("/login/<method>/continue")
 def done(method):
