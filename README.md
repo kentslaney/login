@@ -23,7 +23,7 @@ $ ln -s path/to/repo/src path/to/site-packages/flask_modular_login
 ```
 Ideally, the project should have a virtual environment the package is installed
 into, in which case the `site-packages` path will look like
-`env/lib/python3.VERSION/site-packages/flask_modular_login`
+`venv/lib/python3.VERSION/site-packages/flask_modular_login`
 
 For in the server code for the client project, login requirements can now be
 specified using
@@ -38,19 +38,22 @@ app = flask.Flask(__name__)
 def protected_or_user_info(kind, user):
     # only logged in users can access this route, others redirected by flask
     # user argument now contains keys id, name, picture
-    ...
-
-@app.route("/protected")
-@login_required
-def protected():
-    # same as before, but the user info is now stored in flask.g.user
-    ...
+    return user["id"]
 
 @app.route("/profile_api")
 @login_optional("user")
 def profile(user=None):
     # login optional can be used when logged out users shouldn't see a redirect
-    ...
+    return str(user)
+
+@app.route("/hidden")
+@login_required
+def hidden():
+    # same as before, but the user info is now stored in flask.g.user
+    return profile(user={"id": flask.g.user["id"], "name": "anon", "picture": ""})
+    # methods with optional login can also be called with a custom user argument
+    # but only as a keyword, since *args wrappers can make positional matching
+    # unreliable
 
 bp = flask.Blueprint("private", __name__, url_prefix="/private")
 login_required(bp) # returns bp, could be integrated into line above
@@ -58,7 +61,7 @@ login_required(bp) # returns bp, could be integrated into line above
 @bp.route("/page")
 def page():
     # user info in flask.g.user, access limited to logged in users
-    ...
+    return flask.g.user["name"]
 
 app.register_blueprint(bp) # login_required call could also be here
 
@@ -74,7 +77,9 @@ login server. If this is the case, a prefix can be added to the redirect URL via
 ```python
 from flask_modular_login import LoginBuilder
 
-login_required = LoginBuilder("//example.com/path/prefix")
+login_config = LoginBuilder("//example.com/path/prefix")
+login_required = login_config.login_required
+login_optional = login_config.login_optional
 ```
 or
 ```python
@@ -85,7 +90,7 @@ login_required.prefix = "//example.com/path/prefix"
 # for all submodules as well
 ```
 
-You can then use `login_required` as you normally would.
+You can then use `login_required` and `login_optional` as you normally would.
 
 For the default `server.py` setup, when run as a script, `prefix` should be
 `"//localhost:8972"`, and the only working login option will be "test" until

@@ -39,7 +39,8 @@ except FileNotFoundError:
 @app.route("/login/")
 def login():
     if not authorized():
-        url = {"next": flask.request.args["next"]} if "next" in flask.request.args else {}
+        url = {"next": flask.request.args["next"]} \
+            if "next" in flask.request.args else {}
         return flask.render_template("login.html", debug=app.debug,
             **{name: flask.url_for(method.name + ".login", **url)
                 for name, method in blueprints.items()})
@@ -65,34 +66,32 @@ class LoginBuilder:
         flask.g.__setattr__(self.g_attr, value)
 
     @staticmethod
-    def _session():
-        if flask.current_app == app and not isinstance(flask.session, flask.sessions.NullSession):
+    def session():
+        if flask.current_app == app and not isinstance(
+                flask.session, flask.sessions.NullSession):
             return flask.session
         return app.session_interface.open_session(app, flask.request)
 
-    @staticmethod
-    def session():
-        res = __class__._session()
-        return res
-
     def auth(self, required=True):
-        login_session = LoginBuilder.session()
+        session_ = LoginBuilder.session()
         with app.app_context():
             # the flask dance blueprints modify the current context
             # with before_app_request for all requests to allow lookup
             for ctx_setup in flask.current_app.before_request_funcs[None]:
                 ctx_setup()
-            if not authorized(login_session):
+            if not authorized(session_):
                 if not required:
                     return
                 if flask.request.method == "GET":
-                    return flask.redirect(self.endpoint + "?" + urllib.parse.urlencode({"next": flask.request.url}))
+                    return flask.redirect(
+                        self.endpoint + "?" + urllib.parse.urlencode(
+                            {"next": flask.request.url}))
                 else:
                     flask.abort(401)
             return {
-                    "id": login_session["user"],
-                    "name": login_session["name"],
-                    "picture": login_session["picture"],
+                    "id": session_["user"],
+                    "name": session_["name"],
+                    "picture": session_["picture"],
                 }
 
     def decorate(self, arg=None, required=True):
@@ -100,7 +99,9 @@ class LoginBuilder:
             @functools.wraps(f)
             def wrapper(*args, **kwargs):
                 user = self.auth(required)
-                if arg is None:
+                if user is None:
+                    return f(*args, **kwargs)
+                elif arg is None:
                     self.g = user
                     return f(*args, **kwargs)
                 else:
@@ -111,7 +112,7 @@ class LoginBuilder:
     def before_request(self, bp, required=True):
         def user_auth():
             res = self.auth(required)
-            if type(res) != dict:
+            if isinstance(res, dict):
                 return res
             else:
                 self.g = res

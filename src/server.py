@@ -15,9 +15,9 @@ def done(method):
 @app.route("/login/sessions")
 @login_required("user")
 def active(user):
-    active = [dict(zip(["token", "ip", "authtime"], sess)) for sess in db.queryall(
-        "SELECT token, ip, authtime FROM active WHERE uuid = ?",
-        (user["id"],))]
+    active = [dict(zip(["token", "ip", "authtime"], sess))
+              for sess in db.queryall("SELECT token, ip, authtime FROM active"
+                                      "WHERE uuid = ?", (user["id"],))]
     for sess in active:
         sess["authtime"] = datetime.datetime.fromtimestamp(sess["authtime"])\
             .strftime("%m/%d/%Y %H:%M:%S UTC")
