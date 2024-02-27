@@ -1,3 +1,8 @@
+# Flask Modular Login
+The goal of this project is to allow multiple flask projects to share a single
+OAuth login interface, removing the need for multiple API keys and user
+databases.
+
 ## Usage as a Service
 Add a `credentials.json` to the root directory of this project, in the form
 ```json
@@ -5,8 +10,8 @@ Add a `credentials.json` to the root directory of this project, in the form
     "google|facebook|github": {"id": "username", "secret": "API key"},
 }
 ```
-If you don't have OAuth credentials or a public facing URL yet, starting the
-server in debug mode will add a "test" login option.
+In case the project doesn't have OAuth credentials or a public facing URL yet,
+starting the server in debug mode will add a "test" login option.
 
 Next, start the caching service and server via
 ```bash
@@ -77,9 +82,8 @@ login server. If this is the case, a prefix can be added to the redirect URL via
 ```python
 from flask_modular_login import LoginBuilder
 
-login_config = LoginBuilder("//example.com/path/prefix")
-login_required = login_config.login_required
-login_optional = login_config.login_optional
+login_config = LoginBuilder(prefix="//example.com/path/prefix")
+login_required, login_optional = login_config.decorators
 ```
 or
 ```python
@@ -130,9 +134,37 @@ location @login {
 }
 ```
 
+## Usage as a Package
+If there is only one project (ie one flask app) that this login service is being
+deployed for, it is also possible to use this repo as a normal package, removing
+the extra service/cache to set up.
+```python
+import flask
+from flask_modular_login import OAuthBlueprint, LoginBuilder, login_required
+
+app = flask.Flask(__name__)
+app.register_blueprint(OAuthBlueprint("path/to/credentials/dir"))
+
+login_required.app = app
+# or
+login_required, login_optional = LoginBuilder(app=app).decorators
+
+@app.route("/secret")
+@login_required
+def hidden():
+    return "personal"
+
+if __name__ == "__main__":
+    app.run(port=8080)
+```
+
+This repo isn't currently on pypi, but it can be included as a requirement by
+specifying the git URL. While this setup wasn't the original design goal of the
+project, it's still effective and easier to transition into a separate service
+later on as needed.
+
 ## TODOs
-- enable single project setups
-- invite links (what if an existing user clames the invite?)
+- invite links (requires group permissions)
 - alternate language bindings
 - conform to PEP8, specifically a reasonable character limit
 - flask-dance implementation for apple OAuth

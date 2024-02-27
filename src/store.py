@@ -67,6 +67,9 @@ class Database(HeadlessDB):
 
 from flask_caching.backends.memcache import MemcachedCache
 
+# https://github.com/memcached/memcached/wiki/ConfiguringServer#unix-sockets
+# remember TLS for all sensitive ISP traffic, see: MUSCULAR
+
 class ThreadedMemcached(MemcachedCache):
     def import_preferred_memcache_lib(self, servers):
         import libmc
