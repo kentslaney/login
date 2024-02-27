@@ -163,6 +163,19 @@ specifying the git URL. While this setup wasn't the original design goal of the
 project, it's still effective and easier to transition into a separate service
 later on as needed.
 
+## Customization and OAuth Platform Support
+At the moment, the project serves the login interface from the templates in
+`src/templates`, which probably need styling to match the application if they're
+used. As an alternative, the links that are filled into `/login` by default can
+be opened to in a separate window, which should redirect appropiately. The
+`next` query parameter sets the redirect location.
+
+This project relies on
+[flask-dance](https://github.com/singingwolfboy/flask-dance) for OAuth provider
+integration. To change which are supported, modify the interface connected in
+`src/platforms.py`. Removing items can be done by commenting out lines in the
+`methods` dictionary.
+
 ## TODOs
 - invite links (requires group permissions)
 - alternate language bindings
