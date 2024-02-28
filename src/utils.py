@@ -5,8 +5,9 @@ import flask, flask_caching
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import Database, relpath
+from store import FKDatabase, relpath
 from login import methods, authorized, DBStore
+from access import access_bp, AccessRoot, AccessGroup
 
 end_locals()
 
@@ -53,6 +54,17 @@ class LoginBuilder:
             return flask.session
         return app.session_interface.open_session(app, flask.request)
 
+    def bounce(self, group=None):
+        if flask.request.method == "GET":
+            if group is not None:
+                # TODO: request access page
+                flask.abort(401)
+            return flask.redirect(
+                self.endpoint + "?" + urllib.parse.urlencode(
+                    {"next": flask.request.url}))
+        else:
+            flask.abort(401)
+
     def auth(self, required=True):
         session_ = LoginBuilder.session(self.app)
         with self.app.app_context():
@@ -63,59 +75,79 @@ class LoginBuilder:
             if not authorized(session_):
                 if not required:
                     return
-                if flask.request.method == "GET":
-                    return flask.redirect(
-                        self.endpoint + "?" + urllib.parse.urlencode(
-                            {"next": flask.request.url}))
-                else:
-                    flask.abort(401)
+                return self.bounce()
             return {
                     "id": session_["user"],
                     "name": session_["name"],
                     "picture": session_["picture"],
                 }
 
-    def decorate(self, arg=None, required=True):
+    def vet(self, user, group, required=True):
+        permissions = group.vet(self.app, user["id"])
+        # TODO: cache
+        if permissions is None:
+            return self.bounce(group) if required else user
+        return {**user, "via": dict(zip(("group", "membership"), permissions))}
+
+    def decorate(self, kw=None, required=True, group=None):
         def decorator(f):
             @functools.wraps(f)
             def wrapper(*args, **kwargs):
                 user = self.auth(required)
                 if user is None:
                     return f(*args, **kwargs)
-                elif arg is None:
+                elif not isinstance(user, dict):
+                    return user
+                if group is not None:
+                    user = self.vet(user, group, required)
+                    if not isinstance(user, dict):
+                        return user
+                if kw is None:
                     self.g = user
                     return f(*args, **kwargs)
                 else:
-                    return f(*args, **{arg: user, **kwargs})
+                    return f(*args, **{kw: user, **kwargs})
             return wrapper
         return decorator
 
-    def before_request(self, bp, required=True):
+    def before_request(self, bp, required=True, group=None):
         def user_auth():
             res = self.auth(required)
             if not isinstance(res, dict):
                 return res
-            else:
-                self.g = res
+            elif group is not None:
+                res = self.vet(res, group, required)
+                if not isinstance(res, dict):
+                    return res
+            self.g = res
         bp.before_request(user_auth)
 
-    def login(self, arg=None, required=True):
-        if isinstance(arg, str) or arg is None:
-            return self.decorate(arg, required)
-        elif isinstance(arg, flask.Blueprint) or isinstance(arg, flask.Flask):
-            self.before_request(arg, required)
-            return arg
-        elif callable(arg):
-            return self.decorate(None, required)(arg)
+    def login(self, ambiguous=None, kw=None, group=None, required=True):
+        if isinstance(ambiguous, AccessGroup):
+            if group is not None:
+                raise TypeError(
+                    f"{__class__.__name__}.login()"
+                    " got multiple values for argument 'kw'")
+            group, ambiguous = ambiguous, None
+        if isinstance(ambiguous, str) or ambiguous is None or kw is not None:
+            if ambiguous is not None and kw is not None:
+                raise TypeError(
+                    f"{__class__.__name__}.login()"
+                    " got multiple values for argument 'kw'")
+            kw = ambiguous if kw is None else kw
+            return self.decorate(kw, required, group)
+        elif isinstance(ambiguous, flask.Blueprint) or \
+                isinstance(ambiguous, flask.Flask):
+            self.before_request(ambiguous, required, group)
+            return ambiguous
+        elif callable(ambiguous):
+            return self.decorate(None, required, group)(ambiguous)
 
-    def login_required(self, arg=None):
-        return self.login(arg, True)
+    def login_required(self, ambiguous=None, kw=None, group=None):
+        return self.login(ambiguous, kw, group, True)
 
-    def login_optional(self, arg=None):
-        return self.login(arg, False)
-
-    def optional(self, arg=None):
-        return self.login(arg, False)
+    def login_optional(self, ambiguous=None, kw=None, group=None):
+        return self.login(ambiguous, kw, group, False)
 
     @property
     def decorators(self):
@@ -184,6 +216,9 @@ class OAuthBlueprint(flask.Blueprint):
             self._oauth_keys = {
                 name: {"id": "", "secret": ""} for name in methods.keys()}
 
+        self.access = AccessRoot(self._oauth_db)
+        self.register_blueprint(access_bp)
+
     def login(self):
         if not authorized():
             url = {"next": flask.request.args["next"]} \
@@ -199,9 +234,9 @@ class OAuthBlueprint(flask.Blueprint):
 
     def _oauth_db(self, app=None):
         app = app or flask.current_app
-        return Database(
+        return FKDatabase(
             app, os.path.join(self._oauth_path_root, "users.db"),
-            relpath("schema.sql"), ["PRAGMA foreign_keys = ON"])
+            relpath("schema.sql"))
 
     def _oauth_register(self, app):
         self._oauth_apps.append(app)
@@ -231,5 +266,10 @@ class OAuthBlueprint(flask.Blueprint):
             i.rule for i in app.url_map.iter_rules()
             if i.endpoint == f"{OAuthBlueprint._oauth_name}.login")
 
-bp = OAuthBlueprint()
-app.register_blueprint(bp)
+    @property
+    def group(self):
+        return self.access.create
+
+auth_bp = OAuthBlueprint()
+AccessNamespace = auth_bp.group
+app.register_blueprint(auth_bp)

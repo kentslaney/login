@@ -39,14 +39,14 @@ from flask_modular_login import login_required, login_optional
 app = flask.Flask(__name__)
 
 @app.route("/user_info/<str:kind>")
-@login_required("user")
+@login_required(kw="user")
 def protected_or_user_info(kind, user):
     # only logged in users can access this route, others redirected by flask
     # user argument now contains keys id, name, picture
     return user["id"]
 
 @app.route("/profile_api")
-@login_optional("user")
+@login_optional(kw="user")
 def profile(user=None):
     # login optional can be used when logged out users shouldn't see a redirect
     return str(user)
@@ -177,7 +177,8 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ## TODOs
-- invite links (requires group permissions)
+- invite links
+- various TODOs in src comments
 - alternate language bindings
 - conform to PEP8, specifically a reasonable character limit
 - flask-dance implementation for apple OAuth

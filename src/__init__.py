@@ -3,5 +3,6 @@ from .utils import (
     login_optional,
     LoginBuilder,
     OAuthBlueprint,
-    bp as auth_bp,
+    AccessNamespace,
+    auth_bp,
 )
