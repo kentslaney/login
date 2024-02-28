@@ -61,10 +61,11 @@ class HeadlessDB:
             db = self._g._auth_database = sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
-        if self.debug:
-            db.set_trace_callback(print)
+            if self.debug:
+                db.set_trace_callback(print)
         return db
 
+    # TODO: add paging before use at scale
     def queryall(self, query, args=()):
         cur = self.get().execute(query, args)
         rv = cur.fetchall()
