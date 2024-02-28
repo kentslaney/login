@@ -28,7 +28,7 @@ class TransactionContext(Passthrough):
     rewrite = ("get",)
 
     def get(self):
-        return TransactionConnection(self.parent)
+        return TransactionConnection(self.parent.get())
 
 class HeadlessDB:
     def __init__(self, database, schema, init=[], debug=False):
