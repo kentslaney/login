@@ -8,10 +8,6 @@ from utils import app, auth_bp, login_required
 
 end_locals()
 
-# TODO: delete?
-# @app.route("/login/<method>/continue")
-# def done(method):
-#     return flask.redirect("/")
 # TODO: these should be part of auth_bp
 
 @app.route("/login/sessions")
@@ -33,7 +29,7 @@ def logout(user):
     auth_bp._oauth_deauthorize(
         user["id"], flask.session["token"], flask.session["method"])
     flask.session.clear()
-    return flask.redirect(flask.url_for("login"))
+    return flask.redirect(flask.url_for(auth_bp.name + ".login"))
 
 @app.route("/login/deauthorize/<token>", methods=["POST"])
 @login_required(kw="user")
