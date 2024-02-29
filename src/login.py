@@ -90,8 +90,8 @@ class DBStore(BaseStorage):
         if cached is None:
             info = self.db.queryone(
                 "SELECT auths.token, active.ip, active.authtime FROM active "
-                "LEFT JOIN auths WHERE active.token = ?",
-                (session_["token"],))
+                "LEFT JOIN auths ON auths.uuid=active.uuid "
+                "WHERE active.token = ?", (session_["token"],))
             if info is None:
                 session_.clear()
                 return None

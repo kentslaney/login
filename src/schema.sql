@@ -33,4 +33,33 @@ CREATE TABLE user_groups (
 	FOREIGN KEY(member) REFERENCES auths(uuid),
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
 );
+CREATE UNIQUE INDEX shares ON user_groups(child_group);
+CREATE UNIQUE INDEX invited ON user_groups(parent_group, member);
 CREATE INDEX membership ON user_groups(member, access_group);
+CREATE TABLE invitations (
+	uuid TEXT,
+	inviter TEXT,
+	access_group TEXT,
+	acceptance_expiration INT,
+	access_expiration INT,
+	invitees INT,
+	plus INT,
+	depletes TEXT,
+	depth INT,
+	redirect TEXT,
+	PRIMARY KEY(uuid),
+	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
+	FOREIGN KEY(inviter) REFERENCES shares,
+	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
+);
+CREATE TABLE limitations (
+	member TEXT,
+	parent_group TEXT,
+	active BOOLEAN DEFAULT 1,
+	until INT,
+	spots INT,
+	depletes TEXT,
+	depth INT,
+	FOREIGN KEY(parent_group, member) REFERENCES invited,
+	FOREIGN KEY(depletes) REFERENCES invitations(uuid)
+);

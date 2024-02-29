@@ -1,13 +1,14 @@
-import json, os.path, functools, urllib.parse
+import os.path, functools, urllib.parse
 from werkzeug.middleware.proxy_fix import ProxyFix
-import flask, flask_caching
+import flask
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import FKDatabase, relpath
-from login import methods, authorized, DBStore
-from access import access_bp, AccessRoot, AccessGroup
+from store import relpath
+from login import authorized
+from access import AccessGroup
+from interface import OAuthBlueprint
 
 end_locals()
 
@@ -47,13 +48,6 @@ class LoginBuilder:
     def g(self, value):
         flask.g.__setattr__(self.g_attr, value)
 
-    @staticmethod
-    def session(app):
-        if flask.current_app == app and not isinstance(
-                flask.session, flask.sessions.NullSession):
-            return flask.session
-        return app.session_interface.open_session(app, flask.request)
-
     def bounce(self, group=None):
         if flask.request.method == "GET":
             if group is not None:
@@ -66,7 +60,7 @@ class LoginBuilder:
             flask.abort(401)
 
     def auth(self, required=True):
-        session_ = LoginBuilder.session(self.app)
+        session_ = OAuthBlueprint.session(self.app)
         with self.app.app_context():
             # the flask dance blueprints modify the current context
             # with before_app_request for all requests to allow lookup
@@ -196,79 +190,6 @@ class LoginCaller(BoundCall, LoginBuilder):
 login_config = LoginCaller()
 login_required = login_config.login_required
 login_optional = login_config.login_optional
-
-class OAuthBlueprint(flask.Blueprint):
-    _oauth_name = "modular_login"
-
-    @functools.wraps(flask.Blueprint.__init__)
-    def __init__(self, path_root=relpath(".."), url_prefix="/login"):
-        super().__init__(self._oauth_name, __name__, url_prefix=url_prefix)
-        self._oauth_path_root = path_root
-        self._oauth_apps = []
-        self.route("/")(self.login)
-        self.record(lambda setup_state: self._oauth_register(setup_state.app))
-
-        credentials = os.path.join(self._oauth_path_root, "credentials.json")
-        try:
-            with open(credentials) as f:
-                self._oauth_keys = json.load(f)
-        except FileNotFoundError:
-            self._oauth_keys = {
-                name: {"id": "", "secret": ""} for name in methods.keys()}
-
-        self.access = AccessRoot(self._oauth_db)
-        self.register_blueprint(access_bp)
-
-    def login(self):
-        if not authorized():
-            url = {"next": flask.request.args["next"]} \
-                if "next" in flask.request.args else {}
-            debug = all(i.debug for i in self._oauth_apps)
-            return flask.render_template("login.html", debug=debug, **{
-                name: flask.url_for(method.name + ".login", **url)
-                for name, method in self._oauth_blueprints.items()})
-        return flask.redirect("/")
-
-    def _oauth_deauthorize(self, user, token, method):
-        self._oauth_stores[method].deauthorize(user, token)
-
-    def _oauth_db(self, app=None):
-        app = app or flask.current_app
-        return FKDatabase(
-            app, os.path.join(self._oauth_path_root, "users.db"),
-            relpath("schema.sql"))
-
-    def _oauth_register(self, app):
-        self._oauth_apps.append(app)
-        db = self._oauth_db(app)
-        cache = flask_caching.Cache(app, config={
-            'CACHE_TYPE': 'store.threaded_client'})
-        stores, blueprints = {}, {}
-        for name, (_, factory, scope) in methods.items():
-            stores[name] = DBStore(
-                db, name, cache, lambda: LoginBuilder.session(app))
-            blueprints[name] = factory(
-                client_id=self._oauth_keys[name]["id"],
-                client_secret=self._oauth_keys[name]["secret"],
-                redirect_url=f"/login/{name}/continue",
-                storage=stores[name],
-                scope=scope
-            )
-            app.register_blueprint(
-                url_prefix="/login", blueprint=blueprints[name])
-
-        self._oauth_blueprints = blueprints
-        self._oauth_stores = stores
-
-    @staticmethod
-    def login_endpoint(app):
-        return next(
-            i.rule for i in app.url_map.iter_rules()
-            if i.endpoint == f"{OAuthBlueprint._oauth_name}.login")
-
-    @property
-    def group(self):
-        return self.access.create
 
 auth_bp = OAuthBlueprint()
 AccessNamespace = auth_bp.group

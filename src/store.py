@@ -18,17 +18,57 @@ class Passthrough:
             return object.__getattribute__(self, name)
         return getattr(self.parent, name)
 
+class TransactionCursor(Passthrough):
+    rewrite = ("close",)
+
+    def close(self):
+        pass
+
 class TransactionConnection(Passthrough):
-    rewrite = ("commit",)
+    rewrite = ("commit", "cursor", "_transaction_cursor")
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._transaction_cursor = None
+
+    def cursor(self):
+        if self._transaction_cursor is None:
+            self._transaction_cursor = TransactionCursor(self.parent.cursor())
+        return self._transaction_cursor
 
     def commit(self):
         pass
 
 class TransactionContext(Passthrough):
-    rewrite = ("get",)
+    rewrite = ("get", "commit", "close", "_transaction_con", "begin")
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._transaction_con = None
+
+    def __getattribute__(self, name):
+        res = super().__getattribute__(name)
+        if name not in ("parent", "rewrite") and name not in self.rewrite:
+            member = getattr(self.parent.__class__, name, None)
+            if callable(member):
+                if isinstance(self.parent, DBContext):
+                    member = self.parent.wrapper(member)
+                return functools.partial(member, self)
+        return res
 
     def get(self):
-        return TransactionConnection(self.parent.get())
+        if self._transaction_con is None:
+            self._transaction_con = TransactionConnection(self.parent.get())
+        return self._transaction_con
+
+    def commit(self):
+        self.parent.commit()
+        return self
+
+    def close(self):
+        if self._transaction_con is not None:
+            if self._transaction_con._transaction_cursor is not None:
+                self._transaction_con._transaction_cursor.close()
 
 class HeadlessDB:
     def __init__(self, database, schema, init=[], debug=False):
@@ -43,8 +83,10 @@ class HeadlessDB:
         if not os.path.exists(self.database):
             with self.app.app_context():
                 db = self.get()
+                cur = db.cursor()
                 with self.app.open_resource(self.schema, mode='r') as f:
-                    db.cursor().executescript(f.read())
+                    cur.executescript(f.read())
+                cur.close()
                 db.commit()
                 self.db_init_hook()
 
@@ -58,22 +100,27 @@ class HeadlessDB:
     def get(self):
         db = getattr(self._g, "_auth_database", None)
         if db is None:
-            db = self._g._auth_database = sqlite3.connect(self.database)
+            db = self._g._auth_database = {}
+        if self.database not in db:
+            con = db[self.database] = self._g._auth_database[self.database] = \
+                sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
             if self.debug:
-                db.set_trace_callback(print)
-        return db
+                con.set_trace_callback(print)
+        return db[self.database]
 
     # TODO: add paging before use at scale
     def queryall(self, query, args=()):
-        cur = self.get().execute(query, args)
+        cur = self.get().cursor()
+        cur.execute(query, args)
         rv = cur.fetchall()
         cur.close()
         return rv
 
     def queryone(self, query, args=()):
-        cur = self.get().execute(query, args)
+        cur = self.get().cursor()
+        cur.execute(query, args)
         rv = cur.fetchone()
         cur.close()
         return rv
@@ -96,7 +143,8 @@ class HeadlessDB:
     def close(self):
         db = getattr(self._g, '_auth_database', None)
         if db is not None:
-             db.close()
+            for con in db.values():
+                con.close()
 
     def db_init_hook(self):
         pass
@@ -106,7 +154,7 @@ class DBContext(Passthrough):
 
     def __getattribute__(self, name):
         res = super().__getattribute__(name)
-        return self.wrapper(res) if callable(res) and \
+        return self.wrapper(res) if name != "__class__" and callable(res) and \
             name not in ("parent", "rewrite") and name not in self.rewrite \
             else res
 
@@ -129,13 +177,13 @@ class Database(HeadlessDB):
     def __init__(self, app, database, schema, init=[], debug=False):
         super().__init__(database, schema, init, debug)
         self.app, self._g = app, flask.g
-        app.teardown_appcontext(lambda e: self.close())
+        if app != flask.current_app:
+            app.teardown_appcontext(lambda e: self.close())
         self.ensure()
 
     @property
     def ctx(self):
         return AppContext(self)
-
 
 class DefaultsDB:
     default_sql = []

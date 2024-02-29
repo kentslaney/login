@@ -15,7 +15,7 @@ end_locals()
 def active(user):
     active = [dict(zip(["token", "ip", "authtime"], sess))
               for sess in auth_bp._oauth_db(app).queryall(
-                  "SELECT token, ip, authtime FROM active"
+                  "SELECT token, ip, authtime FROM active "
                   "WHERE uuid = ?", (user["id"],))]
     for sess in active:
         sess["authtime"] = datetime.datetime.fromtimestamp(sess["authtime"])\
