@@ -91,4 +91,4 @@ class AccessGroup:
         if superset is not None:
             return superset
         uniq = self.contains(app, user)
-        return uniq and (self, uniq)
+        return uniq and (self, uniq[0])
