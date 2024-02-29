@@ -14,7 +14,7 @@ class OAuthBlueprint(flask.Blueprint):
     _oauth_name = "modular_login"
 
     @functools.wraps(flask.Blueprint.__init__)
-    def __init__(self, path_root=relpath(".."), url_prefix="/login"):
+    def __init__(self, path_root=relpath("..", "run"), url_prefix="/login"):
         super().__init__(self._oauth_name, __name__, url_prefix=url_prefix)
         self._oauth_path_root = path_root
         self._oauth_apps = []
@@ -55,6 +55,7 @@ class OAuthBlueprint(flask.Blueprint):
         self._oauth_apps.append(app)
         db = self._oauth_db(app)
         cache = flask_caching.Cache(app, config={
+            'CACHE_MEMCACHED_SERVERS': [relpath("..", "run", "memcached.sock")],
             'CACHE_TYPE': 'store.threaded_client'})
         stores, blueprints = {}, {}
         for name, (_, factory, scope) in methods.items():

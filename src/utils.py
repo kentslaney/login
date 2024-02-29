@@ -19,11 +19,11 @@ app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
 
 try:
-    with open(relpath("..", "secret_key"), "rb") as f:
+    with open(relpath("..", "run", "secret_key"), "rb") as f:
         app.secret_key = f.read()
 except FileNotFoundError:
     import os
-    with open(relpath("..", "secret_key"), "wb") as f:
+    with open(relpath("..", "run", "secret_key"), "wb") as f:
         secret = os.urandom(24)
         f.write(secret)
         app.secret_key = secret

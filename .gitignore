@@ -1,9 +1,9 @@
 __pycache__
 *.egg-info
 *.db
-*.ini
 credentials.json
 /env
 /venv
 secret_key
 /build
+/run

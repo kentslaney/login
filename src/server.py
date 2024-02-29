@@ -38,4 +38,4 @@ def kick(token, user):
     return ""
 
 if __name__ == "__main__":
-    app.run(port=8972, debug=True)
+    app.run(port=8000)

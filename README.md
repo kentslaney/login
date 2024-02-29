@@ -11,13 +11,12 @@ Add a `credentials.json` to the root directory of this project, in the form
 }
 ```
 In case the project doesn't have OAuth credentials or a public facing URL yet,
-starting the server in debug mode will add a "test" login option.
+starting the server in debug mode will add a "test" login option. 
 
-Next, start the caching service and server via
+The only dependency not included is the memcached server. Once installed, start
+the caching service and server via
 ```bash
-$ memcached -d
-$ source venv/bin/activate # assuming you have one
-$ python server.py
+$ ./server debug
 ```
 
 In the client project with a login requirement, install the local copy of this
@@ -28,7 +27,7 @@ $ ln -s path/to/repo/src path/to/site-packages/flask_modular_login
 ```
 Ideally, the project should have a virtual environment the package is installed
 into, in which case the `site-packages` path will look like
-`venv/lib/python3.VERSION/site-packages/flask_modular_login`
+`env/lib/python3.VERSION/site-packages/flask_modular_login`
 
 For in the server code for the client project, login requirements can now be
 specified using
@@ -38,7 +37,7 @@ from flask_modular_login import login_required, login_optional
 
 app = flask.Flask(__name__)
 
-@app.route("/user_info/<str:kind>")
+@app.route("/user_info/<kind>")
 @login_required(kw="user")
 def protected_or_user_info(kind, user):
     # only logged in users can access this route, others redirected by flask
@@ -55,7 +54,7 @@ def profile(user=None):
 @login_required
 def hidden():
     # same as before, but the user info is now stored in flask.g.user
-    return profile(user={"id": flask.g.user["id"], "name": "anon", "picture": ""})
+    return profile(user={"id": flask.g.user["id"], "name": "me", "picture": ""})
     # methods with optional login can also be called with a custom user argument
     # but only as a keyword, since *args wrappers can make positional matching
     # unreliable
@@ -96,35 +95,12 @@ login_required.prefix = "//example.com/path/prefix"
 
 You can then use `login_required` and `login_optional` as you normally would.
 
-For the default `server.py` setup, when run as a script, `prefix` should be
-`"//localhost:8972"`, and the only working login option will be "test" until
+For the default server setup, when runing in debug, `prefix` should be
+`"//localhost:8000"`, and the only working login option will be "test" until
 the server is running on externally visable URLs for OAuth services to redirect
-to. By default, `server.py` runs on debug mode, so be careful to change that
-as whell when updating `host` for external visibility.
+to.
 
-When deploying, it's also recommended to use a WSGI server, which can be
-configured using a `.ini` file. It has been excluded from this repo since it's
-fairly platform dependent, but here is an example implementation for reference
-```
-[uwsgi]
-module = wsgi
-master = true
-
-socket = /tmp/flask_modular_login.sock
-chmod-socket = 666
-vacuum = true
-die-on-term = true
-
-chdir = [path to src]
-module = server:app
-processes = 4
-threads = 2
-```
-which is then run using
-```bash
-$ uwsgi --ini uwsgi.ini
-```
-The correspoinding Nginx setup should look like
+For reference, the correspoinding Nginx deployment setup looks like
 ```
 location = /login { rewrite ^ /login/; }
 location /login { try_files $uri @login; }
