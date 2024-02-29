@@ -19,6 +19,7 @@ case $1 in
     ;;
   debug)
     setup
+    cd "$BASE/src"
     python -m flask --app server:app run --port 8000 --debug
     ;;
   start)
