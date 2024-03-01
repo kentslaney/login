@@ -51,8 +51,6 @@ class TransactionContext(Passthrough):
         if name not in ("parent", "rewrite") and name not in self.rewrite:
             member = getattr(self.parent.__class__, name, None)
             if callable(member):
-                # if isinstance(self.parent, DBContext):
-                #     member = self.parent.wrapper(member)
                 return functools.partial(member, self)
         return res
 
