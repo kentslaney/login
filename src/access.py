@@ -162,38 +162,36 @@ class AccessGroup:
         return self.info.sep.join(i.name for i in self.stack)
 
     def register(self, app):
-        # TODO: it'd be nice if db.ctx worked
-        with app.app_context():
-            db = self.info.db(app).begin()
-            uniq = self.uuid or str(uuid.uuid4())
-            parent = None if self.root else self.stack[-1].uuid
-            access_id = db.queryone(
-                "SELECT uuid FROM access_groups WHERE group_name=?",
-                (self.qualname,))
-            if access_id is None:
-                db.execute(
-                    "INSERT INTO access_groups(group_name, parent_group, uuid) "
-                    "VALUES (?, ?, ?) ON CONFLICT(group_name) DO NOTHING",
-                    (self.qualname, parent, uniq))
-                self.uuid = uniq
-                if self.root:
-                    owner = db.queryone(
-                        "SELECT uuid FROM auths WHERE method=? AND platform_id=?",
-                        self.info.owner)
-                    if owner is None:
-                        owner = str(uuid.uuid4())
-                        db.execute(
-                            "INSERT INTO auths(method, platform_id, uuid) "
-                            "VALUES (?, ?, ?)", self.info.owner + (owner,))
-                    else:
-                        owner = owner[0]
+        db = self.info.db(app).ctx.begin()
+        uniq = self.uuid or str(uuid.uuid4())
+        parent = None if self.root else self.stack[-1].uuid
+        access_id = db.queryone(
+            "SELECT uuid FROM access_groups WHERE group_name=?",
+            (self.qualname,))
+        if access_id is None:
+            db.execute(
+                "INSERT INTO access_groups(group_name, parent_group, uuid) "
+                "VALUES (?, ?, ?) ON CONFLICT(group_name) DO NOTHING",
+                (self.qualname, parent, uniq))
+            self.uuid = uniq
+            if self.root:
+                owner = db.queryone(
+                    "SELECT uuid FROM auths WHERE method=? AND platform_id=?",
+                    self.info.owner)
+                if owner is None:
+                    owner = str(uuid.uuid4())
                     db.execute(
-                        "INSERT INTO "
-                        "user_groups(parent_group, member, access_group) "
-                        "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
-            else:
-                self.uuid = access_id[0]
-            db.commit().close()
+                        "INSERT INTO auths(method, platform_id, uuid) "
+                        "VALUES (?, ?, ?)", self.info.owner + (owner,))
+                else:
+                    owner = owner[0]
+                db.execute(
+                    "INSERT INTO "
+                    "user_groups(parent_group, member, access_group) "
+                    "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
+        else:
+            self.uuid = access_id[0]
+        db.commit().close()
 
     def contains(self, app, user):
         db = self.info.db(app).begin()

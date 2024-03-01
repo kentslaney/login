@@ -40,7 +40,7 @@ class TransactionConnection(Passthrough):
         pass
 
 class TransactionContext(Passthrough):
-    rewrite = ("get", "commit", "close", "_transaction_con", "begin")
+    rewrite = ("get", "commit", "close", "_transaction_con", "begin", "ctx")
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -51,8 +51,8 @@ class TransactionContext(Passthrough):
         if name not in ("parent", "rewrite") and name not in self.rewrite:
             member = getattr(self.parent.__class__, name, None)
             if callable(member):
-                if isinstance(self.parent, DBContext):
-                    member = self.parent.wrapper(member)
+                # if isinstance(self.parent, DBContext):
+                #     member = self.parent.wrapper(member)
                 return functools.partial(member, self)
         return res
 
@@ -69,6 +69,47 @@ class TransactionContext(Passthrough):
         if self._transaction_con is not None:
             if self._transaction_con._transaction_cursor is not None:
                 self._transaction_con._transaction_cursor.close()
+        if isinstance(self.parent, AppContext):
+            self.parent.close()
+
+    @property
+    def ctx(self):
+        raise Exception("context should be added before the transaction")
+
+class AppContext(Passthrough):
+    rewrite = ("wrapper", "ctx", "begin", "_transacting")
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._transacting = False
+
+    def __getattribute__(self, name):
+        res = super().__getattribute__(name)
+        return self.wrapper(res) if \
+            name not in ("__class__", "parent", "rewrite") and \
+            name not in self.rewrite and callable(res) \
+            else res
+
+    def wrapper(self, f):
+        @functools.wraps(f)
+        def wrapped(*a, **kw):
+            return self.ctx(lambda: f(*a, **kw))
+        return wrapped
+
+    def ctx(self, f):
+        if self._transacting:
+            return f()
+        with self.parent.app.app_context():
+            return f()
+
+    def begin(self):
+        self._transacting = True
+        self.parent.app.app_context().__enter__()
+        return TransactionContext(self)
+
+    def close(self):
+        self._transacting = False
+        self.parent.app.app_context().__exit__()
 
 class HeadlessDB:
     def __init__(self, database, schema, init=[], debug=False):
@@ -148,29 +189,6 @@ class HeadlessDB:
 
     def db_init_hook(self):
         pass
-
-class DBContext(Passthrough):
-    rewrite = ("wrapper", "ctx", "begin")
-
-    def __getattribute__(self, name):
-        res = super().__getattribute__(name)
-        return self.wrapper(res) if name != "__class__" and callable(res) and \
-            name not in ("parent", "rewrite") and name not in self.rewrite \
-            else res
-
-    def wrapper(self, f):
-        @functools.wraps(f)
-        def wrapped(*a, **kw):
-            return self.ctx(lambda: f(*a, **kw))
-        return wrapped
-
-    def begin(self):
-        return TransactionContext(self)
-
-class AppContext(DBContext):
-    def ctx(self, f):
-        with self.parent.app.app_context():
-            return f()
 
 class Database(HeadlessDB):
     # creates database if it doesn't exist; set up by schema
