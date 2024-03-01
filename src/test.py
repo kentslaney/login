@@ -9,18 +9,27 @@ class MonoBlueprint(Blueprint):
         super().register(app, options)
         self.apps.append(app)
 
-test_bp = MonoBlueprint("test", __name__)
+class TestBP(MonoBlueprint):
+    def __init__(self):
+        super().__init__("test", __name__, url_prefix="/test")
+        self.route("/")(self.debug_only(login))
+        self.route("/as")(self.debug_only(self.test_auth_as))
 
-def debug_only(f):
-    @wraps(f)
-    def wrapped(*a, **kw):
-        if not all(app.debug for app in test_bp.apps):
+    def debug_only(self, f):
+        @wraps(f)
+        def wrapped(*a, **kw):
+            if not all(app.debug for app in self.apps):
+                abort(403)
+            return f(*a, **kw)
+        return wrapped
+
+    def test_auth_as(self):
+        who = test_whois()
+        if len(who) == 0:
             abort(403)
-        return f(*a, **kw)
-    return wrapped
+        test.store.set(self, who)
+        return redirect(request.args.get("next", "/"))
 
-@test_bp.route("/test")
-@debug_only
 def login():
     url = {"next": request.args["next"]} if "next" in request.args else {}
     url = url_for("test.test_auth_as", **url)
@@ -41,17 +50,9 @@ class TestMockSession():
         id = test_whois()
         return {"id": id, "name": id, "picture": test_icon}
 
-@test_bp.route("/test/as")
-@debug_only
-def test_auth_as():
-    who = test_whois()
-    if len(who) == 0:
-        abort(403)
-    test.store.set(test_bp, who)
-    return redirect(request.args.get("next", "/"))
-
 def make_test_blueprint(storage, **kw):
     test_session = TestMockSession(storage)
+    test_bp = TestBP()
 
     @test_bp.before_app_request
     def set_applocal_session():

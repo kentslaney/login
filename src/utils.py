@@ -23,6 +23,7 @@ try:
         app.secret_key = f.read()
 except FileNotFoundError:
     import os
+    os.makedirs(relpath("..", "run"), exist_ok=True)
     with open(relpath("..", "run", "secret_key"), "wb") as f:
         secret = os.urandom(24)
         f.write(secret)
