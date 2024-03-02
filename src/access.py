@@ -21,7 +21,7 @@ def ismember(db, user, group): # group can be a root last stack
             "WHERE user_groups.member=? AND user_groups.access_group=? AND "
             "limitations.active=1", (user, superset))
         if permission is not None:
-            if permission[1] < time.time():
+            if permission[1] is not None and permission[1] < time.time():
                 db.execute(
                     "UPDATE limitations SET active=0 WHERE parent_group=?",
                     (permission[0],))
@@ -202,6 +202,6 @@ class AccessGroup:
     # TODO: strict ordering? (see Google Zanzibar)
     def vet(self, app, user):
         db = self.info.db(app).begin()
-        res = ismember(db, user, reversed(i.uuid for i in self.stack))
+        res = ismember(db, user, tuple(reversed([i.uuid for i in self.stack])))
         db.close()
         return res

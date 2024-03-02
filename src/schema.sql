@@ -49,7 +49,7 @@ CREATE TABLE invitations (
 	redirect TEXT,
 	PRIMARY KEY(uuid),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
-	FOREIGN KEY(inviter) REFERENCES shares,
+	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
 );
 CREATE TABLE limitations (
@@ -60,6 +60,6 @@ CREATE TABLE limitations (
 	spots INT,
 	depletes TEXT,
 	depth INT,
-	FOREIGN KEY(parent_group, member) REFERENCES invited,
+	FOREIGN KEY(parent_group, member) REFERENCES user_groups(parent_group, member),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid)
 );
