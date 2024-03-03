@@ -10,12 +10,20 @@ CREATE UNIQUE INDEX platform ON auths(method, platform_id);
 CREATE UNIQUE INDEX authid ON auths(uuid);
 CREATE TABLE active (
 	uuid TEXT,
-	token TEXT,
+	access TEXT,
+	refresh TEXT,
 	ip TEXT,
 	authtime FLOAT,
+	refresh_time FLOAT,
 	FOREIGN KEY(uuid) REFERENCES auths(uuid) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX activities ON active(token);
+CREATE UNIQUE INDEX activities ON active(access);
+CREATE UNIQUE INDEX persistent ON active(refresh);
+CREATE TABLE revoked (
+	revoked_time FLOAT,
+	access TEXT,
+	refresh_time FLOAT
+);
 
 CREATE TABLE access_groups (
 	uuid TEXT,

@@ -153,9 +153,12 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ## TODOs
+- pub/sub deauthenticated tokens for forwarded ports
+- option to limit sharing by total use time
 - invite links
+- linked accounts
 - various TODOs in src comments
-- alternate language bindings
+- alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - conform to PEP8, specifically a reasonable character limit
 - flask-dance implementation for apple OAuth
 ([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),

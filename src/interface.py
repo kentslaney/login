@@ -12,25 +12,27 @@ end_locals()
 
 class OAuthBlueprint(flask.Blueprint):
     _oauth_name = "modular_login"
+    _credentials_paths = ((), ("..",))
 
-    @functools.wraps(flask.Blueprint.__init__)
     def __init__(self, path_root=relpath("..", "run"), url_prefix="/login"):
         super().__init__(self._oauth_name, __name__, url_prefix=url_prefix)
-        self._oauth_path_root = path_root
-        self._oauth_apps = []
+        self._oauth_path_root, self._oauth_apps = path_root, []
+        self._get_oauth_keys()
         self.route("/")(self.login)
         self.record(lambda setup_state: self._oauth_register(setup_state.app))
 
-        credentials = os.path.join(self._oauth_path_root, "credentials.json")
-        try:
-            with open(credentials) as f:
-                self._oauth_keys = json.load(f)
-        except FileNotFoundError:
-            self._oauth_keys = {
-                name: {"id": "", "secret": ""} for name in methods.keys()}
-
         self.group = AccessRoot(self._oauth_db, OAuthBlueprint.login_endpoint)
         self.register_blueprint(self.group.bp)
+
+    def _get_oauth_keys(self):
+        for rel in self._credentials_paths:
+            path = os.path.join(self._oauth_path_root, *rel, "credentials.json")
+            if os.path.exists(path):
+                with open(path) as f:
+                    self._oauth_keys = json.load(f)
+                return
+        self._oauth_keys = {
+            name: {"id": "", "secret": ""} for name in methods.keys()}
 
     def login(self):
         if not authorized(): # only accessed in auth app's context
@@ -42,14 +44,14 @@ class OAuthBlueprint(flask.Blueprint):
                 for name, method in self._oauth_blueprints.items()})
         return flask.redirect("/")
 
-    def _oauth_deauthorize(self, user, token, method):
-        self._oauth_stores[method].deauthorize(user, token)
+    def _oauth_deauthorize(self, token, method):
+        self._oauth_stores[method].deauthorize(token)
 
     def _oauth_db(self, app=None):
         app = app or flask.current_app
         return FKDatabase(
             app, os.path.join(self._oauth_path_root, "users.db"),
-            relpath("schema.sql"), debug=True)
+            relpath("schema.sql"), debug=app.debug)
 
     def _oauth_register(self, app):
         self._oauth_apps.append(app)
@@ -60,7 +62,8 @@ class OAuthBlueprint(flask.Blueprint):
         stores, blueprints = {}, {}
         for name, (_, factory, scope) in methods.items():
             stores[name] = DBStore(
-                db, name, cache, lambda: OAuthBlueprint.session(app))
+                db, name, cache, lambda: OAuthBlueprint.session(app),
+                *app.config["TIMEOUTS"])
             blueprints[name] = factory(
                 client_id=self._oauth_keys[name]["id"],
                 client_secret=self._oauth_keys[name]["secret"],

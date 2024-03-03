@@ -43,9 +43,11 @@ def authorized(session_=None):
         return methods[method][0].authorized
 
 class DBStore(BaseStorage):
-    def __init__(self, db, method, cache=None, session_=None, timeout=None):
+    def __init__(self, db, method, cache=None, session_=None,
+                 refresh=3600*24, timeout=3600*24*90):
         super().__init__()
-        self.db, self.method, self.timeout = db, method, timeout
+        self.db, self.method = db, method
+        self.refresh, self.timeout = refresh, timeout
         self.cache = cache or FakeCache()
         self.session = session_ or (lambda: flask.session)
 
@@ -73,42 +75,60 @@ class DBStore(BaseStorage):
                 (self.method, info["id"]))[0]
 
         secret, authtime = secrets.token_urlsafe(32), int(time.time())
+        refresh = secrets.token_urlsafe(32)
         ip = flask.request.remote_addr
-        session_["user"], session_["token"] = uniq, secret
+        session_["user"], session_["access"] = uniq, secret
+        session_["refresh"], session_["refresh_time"] = refresh, authtime
         session_["name"], session_["picture"] = info["name"], info["picture"]
         self.db.execute(
-            "INSERT INTO active(uuid, token, ip, authtime) VALUES (?, ?, ?, ?)",
-            (uniq, secret, ip, authtime))
-        self.cache.set(secret, (encoded, ip, authtime))
+            "INSERT INTO active"
+            "(uuid, access, refresh, ip, authtime, refresh_time) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uniq, secret, refresh, ip, authtime, authtime))
+        self.cache.set(refresh, (token, secret, ip, authtime, authtime))
 
     def get(self, blueprint):
-        session_ = self.session()
-        if "token" not in session_:
+        session_, info = self.session(), None
+        if "refresh" not in session_:
             return None
 
-        cached = self.cache.get(session_["token"])
+        cached = self.cache.get(session_["refresh"])
         if cached is None:
             info = self.db.queryone(
-                "SELECT auths.token, active.ip, active.authtime FROM active "
-                "LEFT JOIN auths ON auths.uuid=active.uuid "
-                "WHERE active.token = ?", (session_["token"],))
+                "SELECT auths.token, active.access, active.ip, "
+                "active.authtime, active.refresh_time "
+                "FROM active LEFT JOIN auths ON auths.uuid=active.uuid "
+                "WHERE active.refresh=?", (session_["refresh"],))
             if info is None:
                 session_.clear()
                 return None
 
-            token, ip, authtime = info
-            self.cache.set(session_["token"], (token, ip, authtime))
+            token, access, ip, authtime, refresh_time = info
         else:
-            token, ip, authtime = cached
+            token, access, ip, authtime, refresh_time = cached
 
         if self.timeout and int(time.time()) - authtime > self.timeout:
+            self.deauthorize(session_["refresh"])
+            session_.clear()
             return None
+
+        if self.refresh and int(time.time()) - refresh_time > self.refresh:
+            access, refresh_time = secrets.token_urlsafe(32), int(time.time())
+            self.db.execute(
+                "UPDATE active SET access=?, refresh_time=? WHERE refresh=?",
+                (access, refresh_time, session_["refresh"]))
+            info = info or cached
+            info[1], info[4] = access, refresh_time
 
         current_ip = flask.request.remote_addr
         if ip != current_ip:
-            self.db.execute("UPDATE active SET ip = ? WHERE token = ?",
-                (current_ip, session_["token"]))
-            self.cache.set(session_["token"], (token, current_ip, authtime))
+            self.db.execute("UPDATE active SET ip=? WHERE refresh=?",
+                (current_ip, session_["refresh"]))
+            info = info or cached
+            info[2] = current_ip
+
+        if info is not None:
+            self.cache.set(session_["refresh"], info)
 
         return json.loads(token)
 
@@ -117,13 +137,28 @@ class DBStore(BaseStorage):
         if "user" not in session_:
             return None
 
-        for (token,) in self.db.queryall(
-                "SELECT token FROM active WHERE uuid = ?", (session_["user"],)):
-            self.cache.delete(token)
+        for (refresh,) in self.db.queryall(
+                "SELECT refresh FROM active WHERE uuid=?", (session_["user"],)):
+            self.deauthorize(refresh)
 
-        self.db.execute("DELETE FROM auths WHERE uuid = ?", (session_["user"],))
+        self.db.execute("DELETE FROM auths WHERE uuid=?", (session_["user"],))
 
-    def deauthorize(self, user, token):
-        self.db.execute(
-            "DELETE FROM active WHERE uuid = ? AND token = ?", (user, token,))
-        self.cache.delete(token)
+    def deauthorize(self, refresh, user=None):
+        session_ = self.session()
+        db = self.db.begin()
+        user_query, user_args = ("", ()) if user is None else \
+            (" AND user=?", (user,))
+        authtime = db.queryone(
+            "SELECT authtime FROM active WHERE refresh=?" + user_query,
+            (refresh,) + user_args)
+        if authtime == None:
+            return None
+        db.execute(
+            "INSERT INTO revoked(revoked_time, access, authtime, refresh_time) "
+            "VALUES (?, ?, ?, ?)", (
+                float(time.time()), session_["access"], authtime[0],
+                session_["refresh_time"]))
+        db.execute(
+            "DELETE FROM active WHERE refresh=?", (refresh,))
+        self.cache.delete(refresh)
+        db.commit().close()

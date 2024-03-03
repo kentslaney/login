@@ -1,4 +1,4 @@
-import os.path, functools, urllib.parse
+import os, os.path, functools, urllib.parse
 from werkzeug.middleware.proxy_fix import ProxyFix
 import flask
 
@@ -17,23 +17,30 @@ end_locals()
 app = flask.Flask(__name__)
 app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
-
-try:
-    with open(relpath("..", "run", "secret_key"), "rb") as f:
-        app.secret_key = f.read()
-except FileNotFoundError:
-    import os
-    os.makedirs(relpath("..", "run"), exist_ok=True)
-    with open(relpath("..", "run", "secret_key"), "wb") as f:
-        secret = os.urandom(24)
-        f.write(secret)
-        app.secret_key = secret
+app.config["KEY_PATHS"] = default_paths = (relpath("..", "run"), relpath(".."))
+app.config["TIMEOUTS"] = (3600 * 24, 3600 * 24 * 90)
 
 class LoginBuilder:
     def __init__(self, app=app, prefix=None, g_attr="user"):
         self.app = app
         self.prefix = prefix
         self.g_attr = g_attr
+        app.secret_key = self.key_factory()
+
+    def key_factory(self):
+        paths = self.app.config.get("KEY_PATHS", default_paths)
+        for path in paths:
+            file = os.path.join(path, "secret_key")
+            if os.path.exists(file):
+                with open(file, "rb") as f:
+                    return f.read()
+
+        os.makedirs(paths[0], exist_ok=True)
+        with open(os.path.join(paths[0], "secret_key"), "wb") as f:
+            secret = os.urandom(24)
+            f.write(secret)
+            self.app.secret_key = secret
+        return secret
 
     @property
     def endpoint(self):
@@ -187,11 +194,3 @@ class BoundCall:
 
 class LoginCaller(BoundCall, LoginBuilder):
     pass
-
-login_config = LoginCaller()
-login_required = login_config.login_required
-login_optional = login_config.login_optional
-
-auth_bp = OAuthBlueprint()
-AccessNamespace = auth_bp.group
-app.register_blueprint(auth_bp)
