@@ -50,10 +50,10 @@ class LoginBuilder:
         flask.g.__setattr__(self.g_attr, value)
 
     def bounce(self, group=None):
+        if group is not None:
+            # TODO: request access page
+            flask.abort(403)
         if flask.request.method == "GET":
-            if group is not None:
-                # TODO: request access page
-                flask.abort(401)
             return flask.redirect(
                 self.endpoint + "?" + urllib.parse.urlencode(
                     {"next": flask.request.url}))
