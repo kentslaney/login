@@ -92,13 +92,14 @@ class DBStore(BaseStorage):
         if "refresh" not in session_:
             return None
 
-        cached = self.cache.get(session_["refresh"])
+        refresh = session_["refresh"]
+        cached = self.cache.get(refresh)
         if cached is None:
             info = self.db.queryone(
                 "SELECT auths.token, active.access, active.ip, "
                 "active.authtime, active.refresh_time "
                 "FROM active LEFT JOIN auths ON auths.uuid=active.uuid "
-                "WHERE active.refresh=?", (session_["refresh"],))
+                "WHERE active.refresh=?", (refresh,))
             if info is None:
                 session_.clear()
                 return None
@@ -108,27 +109,37 @@ class DBStore(BaseStorage):
             token, access, ip, authtime, refresh_time = cached
 
         if self.timeout and int(time.time()) - authtime > self.timeout:
-            self.deauthorize(session_["refresh"])
+            self.deauthorize(refresh)
             session_.clear()
             return None
 
         if self.refresh and int(time.time()) - refresh_time > self.refresh:
-            access, refresh_time = secrets.token_urlsafe(32), int(time.time())
-            self.db.execute(
-                "UPDATE active SET access=?, refresh_time=? WHERE refresh=?",
-                (access, refresh_time, session_["refresh"]))
+            skip = False
+            if cached is not None:
+                cur, update = self.db.queryone(
+                    "SELECT access, refresh_time from active WHERE refresh=?",
+                    (refresh,))
+                if cur != access and int(time.time()) - update < self.refresh:
+                    access, refresh_time = cur, update
+                    skip = True
+            if not skip:
+                access = secrets.token_urlsafe(32)
+                refresh_time = int(time.time())
+                self.db.execute(
+                    "UPDATE active SET access=?, refresh_time=? "
+                    "WHERE refresh=?", (access, refresh_time, refresh))
             info = info or cached
             info[1], info[4] = access, refresh_time
 
         current_ip = flask.request.remote_addr
         if ip != current_ip:
             self.db.execute("UPDATE active SET ip=? WHERE refresh=?",
-                (current_ip, session_["refresh"]))
+                (current_ip, refresh))
             info = info or cached
             info[2] = current_ip
 
         if info is not None:
-            self.cache.set(session_["refresh"], info)
+            self.cache.set(refresh, info)
 
         return json.loads(token)
 

@@ -1,8 +1,6 @@
 import datetime, flask, urllib.parse
 
-import sys, os.path
-
-from src.store import relpath; end_locals, start_locals = lambda: sys.path.pop(0), (
+import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from interface import OAuthBlueprint
