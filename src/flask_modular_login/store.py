@@ -3,6 +3,8 @@ import os.path, functools
 def relpath(*args):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
 
+project_path = lambda *a: relpath("..", "..", *a)
+
 # http://flask.pocoo.org/docs/0.11/patterns/sqlite3/
 import sqlite3, contextlib
 import flask
@@ -230,3 +232,34 @@ class ThreadedMemcached(MemcachedCache):
 
 def threaded_client(app, config, args, kwargs):
     return ThreadedMemcached.factory(app, config, args, kwargs)
+
+class RouteLobby:
+    routes = None
+
+    @classmethod
+    def route(cls, *a, **kw):
+        def wrapper(f):
+            if cls.routes is None:
+                cls.routes = []
+            cls.routes.append((a, kw, f))
+            return f
+        return wrapper
+
+    def register_lobby(self, bp):
+        for a, kw, f in self.routes:
+            bp.route(*a, **kw)(
+                functools.wraps(f)(functools.partial(f, self)))
+
+key_paths = (project_path("run"), project_path())
+def secret_key(paths = key_paths):
+    for path in paths:
+        file = os.path.join(path, "secret_key")
+        if os.path.exists(file):
+            with open(file, "rb") as f:
+                return f.read()
+
+    os.makedirs(paths[0], exist_ok=True)
+    with open(os.path.join(paths[0], "secret_key"), "wb") as f:
+        secret = os.urandom(24)
+        f.write(secret)
+    return secret

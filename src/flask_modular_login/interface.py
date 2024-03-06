@@ -4,7 +4,7 @@ import flask, flask_caching
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import FKDatabase, relpath
+from store import FKDatabase, relpath, project_path
 from login import methods, authorized, DBStore
 from access import AccessRoot
 
@@ -14,7 +14,7 @@ class OAuthBlueprint(flask.Blueprint):
     _oauth_name = "modular_login"
     _credentials_paths = ((), ("..",))
 
-    def __init__(self, path_root=relpath("..", "run"), url_prefix="/login"):
+    def __init__(self, path_root=project_path("run"), url_prefix="/login"):
         super().__init__(self._oauth_name, __name__, url_prefix=url_prefix)
         self._oauth_path_root, self._oauth_apps = path_root, []
         self._get_oauth_keys()
@@ -57,7 +57,7 @@ class OAuthBlueprint(flask.Blueprint):
         self._oauth_apps.append(app)
         db = self._oauth_db(app)
         cache = flask_caching.Cache(app, config={
-            'CACHE_MEMCACHED_SERVERS': [relpath("..", "run", "memcached.sock")],
+            'CACHE_MEMCACHED_SERVERS': [project_path("run", "memcached.sock")],
             'CACHE_TYPE': 'store.threaded_client'})
         stores, blueprints = {}, {}
         for name, (_, factory, scope) in methods.items():

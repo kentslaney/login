@@ -4,3 +4,6 @@ blinker
 flask-caching
 uwsgi
 libmc @ git+https://github.com/kentslaney/libmc
+cryptography
+requests
+websockets

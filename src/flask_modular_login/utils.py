@@ -5,7 +5,7 @@ import flask
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import relpath
+from store import secret_key
 from login import authorized
 from access import AccessGroup
 from interface import OAuthBlueprint
@@ -17,7 +17,6 @@ end_locals()
 app = flask.Flask(__name__)
 app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
-app.config["KEY_PATHS"] = default_paths = (relpath("..", "run"), relpath(".."))
 app.config["TIMEOUTS"] = (3600 * 24, 3600 * 24 * 90)
 
 class LoginBuilder:
@@ -25,22 +24,7 @@ class LoginBuilder:
         self.app = app
         self.prefix = prefix
         self.g_attr = g_attr
-        app.secret_key = self.key_factory()
-
-    def key_factory(self):
-        paths = self.app.config.get("KEY_PATHS", default_paths)
-        for path in paths:
-            file = os.path.join(path, "secret_key")
-            if os.path.exists(file):
-                with open(file, "rb") as f:
-                    return f.read()
-
-        os.makedirs(paths[0], exist_ok=True)
-        with open(os.path.join(paths[0], "secret_key"), "wb") as f:
-            secret = os.urandom(24)
-            f.write(secret)
-            self.app.secret_key = secret
-        return secret
+        app.secret_key = secret_key()
 
     @property
     def endpoint(self):

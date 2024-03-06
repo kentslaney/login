@@ -23,11 +23,7 @@ In the client project with a login requirement, install the local copy of this
 repo using
 ```bash
 $ pip install -e path/to/repo
-$ ln -s path/to/repo/src path/to/site-packages/flask_modular_login
 ```
-Ideally, the project should have a virtual environment the package is installed
-into, in which case the `site-packages` path will look like
-`env/lib/python3.VERSION/site-packages/flask_modular_login`
 
 For in the server code for the client project, login requirements can now be
 specified using

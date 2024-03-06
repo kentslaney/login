@@ -4,6 +4,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from login import authorized
+from store import RouteLobby
 
 end_locals()
 
@@ -32,15 +33,8 @@ def ismember(db, user, group): # group can be a root last stack
 GroupInfo = collections.namedtuple("GroupInfo", (
     "bind", "db", "owner", "sep"))
 
-class AccessRouter:
-    routes = []
-
-    @staticmethod
-    def route(*a, **kw):
-        def wrapper(f):
-            AccessRouter.routes.append((a, kw, f))
-            return f
-        return wrapper
+class AccessRouter(RouteLobby):
+    pass
 
 class AccessRoot(AccessRouter):
     def __init__(self, db, redirect):
@@ -49,9 +43,7 @@ class AccessRoot(AccessRouter):
         self.bp = flask.Blueprint(
             "modular_login_access", __name__, url_prefix="/access")
         self.bp.record(lambda setup_state: self.register(setup_state.app))
-        for a, kw, f in self.routes:
-            self.bp.route(*a, **kw)(
-                functools.wraps(f)(functools.partial(f, self)))
+        self.register_lobby(self.bp)
 
     def register(self, app):
         self.registered.append(app)
@@ -125,7 +117,6 @@ class AccessRoot(AccessRouter):
                     count, parent = db.queryone(
                         "SELECT invitees, depletes FROM invitations "
                         "WHERE uuid=?", (parent,))
-        print(info[0], info[1])
         db.execute(
             "INSERT INTO user_groups(parent_group, member, access_group) "
             "VALUES (?, ?, ?)", (info[0], user, info[1]))
@@ -143,8 +134,6 @@ class AccessRoot(AccessRouter):
             (user, info[0], until, info[5], invite, depth))
         db.commit().close()
         return flask.redirect(info[8])
-
-del AccessRouter
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):
