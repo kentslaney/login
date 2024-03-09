@@ -150,9 +150,9 @@ integration. To change which are supported, modify the interface connected in
 
 ## TODOs
 - pub/sub deauthenticated tokens for forwarded ports
-- option to limit sharing by total use time
 - invite links
 - linked accounts
+- invite option to limit sharing by total use time
 - various TODOs in src comments
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - conform to PEP8, specifically a reasonable character limit

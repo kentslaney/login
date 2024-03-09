@@ -42,12 +42,29 @@ def authorized(session_=None):
     if method in methods:
         return methods[method][0].authorized
 
+def refresh_access(db, access, refresh, refresh_time, access_timeout, cached):
+    now = int(time.time())
+    if access_timeout and now - refresh_time > access_timeout:
+        if cached:
+            cur, update = db.queryone(
+                "SELECT access, refresh_time from active WHERE refresh=?",
+                (refresh,))
+            if cur != access and now - update < access_timeout:
+                return True, False, cur, update
+        access = secrets.token_urlsafe(32)
+        db.execute(
+            "UPDATE active SET access=?, refresh_time=? "
+            "WHERE refresh=?", (access, now, refresh))
+        return True, False, access, now
+    return False, False, access, refresh_time
+
 class DBStore(BaseStorage):
     def __init__(self, db, method, cache=None, session_=None,
-                 refresh=3600*24, timeout=3600*24*90):
+                 access_timeout=3600*24, refresh_timeout=3600*24*90):
         super().__init__()
         self.db, self.method = db, method
-        self.refresh, self.timeout = refresh, timeout
+        self.access_timeout = access_timeout
+        self.refresh_timeout = refresh_timeout
         self.cache = cache or FakeCache()
         self.session = session_ or (lambda: flask.session)
 
@@ -88,6 +105,7 @@ class DBStore(BaseStorage):
         self.cache.set(refresh, (token, secret, ip, authtime, authtime))
 
     def get(self, blueprint):
+        db = self.db.begin()
         session_, info = self.session(), None
         if "refresh" not in session_:
             return None
@@ -95,7 +113,7 @@ class DBStore(BaseStorage):
         refresh = session_["refresh"]
         cached = self.cache.get(refresh)
         if cached is None:
-            info = self.db.queryone(
+            info = db.queryone(
                 "SELECT auths.token, active.access, active.ip, "
                 "active.authtime, active.refresh_time "
                 "FROM active LEFT JOIN auths ON auths.uuid=active.uuid "
@@ -108,38 +126,34 @@ class DBStore(BaseStorage):
         else:
             token, access, ip, authtime, refresh_time = cached
 
-        if self.timeout and int(time.time()) - authtime > self.timeout:
+        if self.refresh_timeout and int(
+                time.time()) - authtime > self.refresh_timeout:
             self.deauthorize(refresh)
             session_.clear()
             return None
 
-        if self.refresh and int(time.time()) - refresh_time > self.refresh:
-            skip = False
-            if cached is not None:
-                cur, update = self.db.queryone(
-                    "SELECT access, refresh_time from active WHERE refresh=?",
-                    (refresh,))
-                if cur != access and int(time.time()) - update < self.refresh:
-                    access, refresh_time = cur, update
-                    skip = True
-            if not skip:
-                access = secrets.token_urlsafe(32)
-                refresh_time = int(time.time())
-                self.db.execute(
-                    "UPDATE active SET access=?, refresh_time=? "
-                    "WHERE refresh=?", (access, refresh_time, refresh))
+        updated, write, access, refresh_time = refresh_access(
+            db, access, refresh, refresh_time, self.access_timeout,
+            cached is not None)
+
+        if updated:
             info = info or cached
             info[1], info[4] = access, refresh_time
 
         current_ip = flask.request.remote_addr
         if ip != current_ip:
-            self.db.execute("UPDATE active SET ip=? WHERE refresh=?",
+            db.execute("UPDATE active SET ip=? WHERE refresh=?",
                 (current_ip, refresh))
             info = info or cached
             info[2] = current_ip
+            write = True
 
         if info is not None:
             self.cache.set(refresh, info)
+
+        if write:
+            db.commit()
+        db.close()
 
         return json.loads(token)
 

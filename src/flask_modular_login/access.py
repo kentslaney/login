@@ -1,4 +1,4 @@
-import flask, uuid, functools, collections, urllib.parse, time
+import flask, uuid, collections, urllib.parse, time
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))

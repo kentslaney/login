@@ -175,6 +175,13 @@ class HeadlessDB:
         cur.close()
         return res or None
 
+    def executemany(self, query, args=()):
+        con = self.get()
+        cur = con.cursor()
+        cur.executemany(query, args)
+        con.commit()
+        cur.close()
+
     def begin(self):
         return TransactionContext(self)
 

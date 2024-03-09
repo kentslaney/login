@@ -22,6 +22,14 @@ CREATE UNIQUE INDEX persistent ON active(refresh);
 CREATE TABLE revoked (
 	revoked_time FLOAT,
 	access TEXT,
+	authtime FLOAT,
+	refresh_time FLOAT
+);
+CREATE UNIQUE INDEX removed ON revoked(access);
+CREATE TABLE ignore (
+	ref INT,
+	revoked_time FLOAT,
+	access TEXT,
 	refresh_time FLOAT
 );
 
