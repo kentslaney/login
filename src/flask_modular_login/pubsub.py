@@ -23,7 +23,9 @@ class Handshake:
     otp_timeout_ms = 5000
 
     def __init__(self, root_path=None):
+        root_path = root_path or project_path("run")
         self.root_path = lambda *a: os.path.join(root_path, *a)
+        self.unix_path = self.root_path("refresh.sock")
         root_path = root_path or project_path("run")
         self.uri = f"wss://{self.host or 'localhost'}:{self.port}"
 
@@ -196,6 +198,8 @@ class ServerWS(Handshake):
 
         if self.refresh_timeout and int(
                 time.time()) - authtime > self.refresh_timeout:
+            if cached is not None:
+                self.cache.delete(auth)
             return json.dumps([None, None])
 
         write, access, refresh_time = refresh_access(
@@ -242,14 +246,11 @@ class ServerWS(Handshake):
 
 class ClientWS(Handshake):
     # TODO
-    # connect to ws
-    # send otp
-    # concurrently, after sending otp, call update
     # maybe timeout after long silence and reconnect when a request hits
     # probably add versioning to messages/events to allow upgrades w/o downtime
-    # create ws server for client flask BP to use for refreshing access tokens
-    #     need one per thread though, maybe use multiprocessing to fork
+    # need one instance per thread, maybe use multiprocessing to fork
     #     when the client interface is created in LoginBuilder subclass
+    # update unix_path to have one socket per thread
 
     def __init__(self, base_url, db, cache=None, root_path=None):
         super.__init__(root_path)
@@ -282,3 +283,43 @@ class ClientWS(Handshake):
         self.db.executemany(
             "INSERT INTO ignore(ref, revoked_time, access, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
+
+    def refresh_access(self, refresh, access, refresh_time):
+        self.db.execute(
+            "UPDATE active SET access=?, refresh_time=? WHERE refresh=?",
+            (access, refresh_time, refresh))
+
+    async def listen(self):
+        async with websockets.connect(self.uri) as wsc, websockets.unix_serve(
+                self.handler, self.unix_path) as wss:
+            wsc.send(self.otp())
+            client, server = wsc.recv(), wss.recv()
+            asyncio.to_thread(self.update)
+            while True:
+                done, pending = await asyncio.wait([client, server])
+                done = next(iter(done))
+                if client is done:
+                    self.revoke(json.loads(self.accept(done.result())))
+                else:
+                    pending = next(iter(pending))
+                    pending.cancel()
+                    auth = done.result()
+                    await wsc.send(auth)
+                    message = await wsc.recv()
+                    access, refresh_time = json.dumps(message)
+                    ps = lambda: self.refresh_access(auth, access, refresh_time)
+                    asyncio.to_thread(ps)
+                    await wss.send(message)
+                    server = wss.recv()
+                client = wsc.recv()
+
+    def deauthorize(self, revoked_time, access, refresh_time):
+        asyncio.run(self.send_deauthorize(revoked_time, access, refresh_time))
+
+class ClientBP(Handshake):
+    async def reload_access(self, refresh):
+        async with websockets.unix_connect(self.unix_path) as websocket:
+            return json.loads(await websocket.send(refresh))
+
+    def refresh(self, refresh):
+        return asyncio.run(self.reload_access(refresh))
