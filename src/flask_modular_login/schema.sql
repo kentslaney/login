@@ -76,6 +76,7 @@ CREATE TABLE limitations (
 	spots INT,
 	depletes TEXT,
 	depth INT,
-	FOREIGN KEY(parent_group, member) REFERENCES user_groups(parent_group, member),
+	FOREIGN KEY(parent_group, member) REFERENCES user_groups(
+		parent_group, member),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid)
 );

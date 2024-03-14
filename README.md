@@ -106,6 +106,20 @@ location @login {
 }
 ```
 
+Another important option for load balancing is being able to have the login
+system as a separate service, only contacted when a access token needs to be
+refreshed or a refresh token revoked (eg when the user logs out). In order to
+connect the login service with the client server, the client needs to be able to
+access an open port on the login server. While the protocol allows this to be
+open to the internet while remaining secure, it's likely preferable to use
+(reverse) port forwarding on top of ssh to establish the connection unless the
+entire cluster is running behind a firewall.
+
+The login server will automatically create the websocket processes and to
+integrate a client project `LoginBuilder` just has to be substituted with
+`RemoteLoginBuilder`. The default port is `8765`, and the host string will need
+to be changed if it's accessed via IP/DNS instead of port forwarding.
+
 ## Usage as a Package
 If there is only one project (ie one flask app) that this login service is being
 deployed for, it is also possible to use this repo as a normal package, removing
@@ -149,13 +163,19 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ## TODOs
+- throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
+- \[should be able to expose desktop ML work starting here]
 - invite links
+- better HTML interfaces/more informative errors/request access pages
+- \[JND needs to be here but doesn't need pub/sub]
 - linked accounts
+- \[notes app]
+- linked list invites to access multiple groups
 - invite option to limit sharing by total use time
-- various TODOs in src comments
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
-- conform to PEP8, specifically a reasonable character limit
 - flask-dance implementation for apple OAuth
 ([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
 [Reference implementation](https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
+- horizontal scaling
+- ...unit tests

@@ -8,12 +8,19 @@ from store import RouteLobby
 
 end_locals()
 
-def ismember(db, user, group): # group can be a root last stack
-    stack, parent = ([], (group,)) if isinstance(group, str) else (group, None)
+def access_stack(db, init, extra=()):
+    stack, parent = [], (init,) if isinstance(init, str) else init
+    assert len(extra) + 1 == len(parent)
+    query = "".join(", " + i for i in extra)
     while parent is not None:
-        stack.append(parent[0])
+        stack.append(parent)
         parent = db.queryone(
-            "SELECT parent_group FROM access_groups WHERE uuid=?", (stack[-1],))
+            f"SELECT parent_group{query} FROM access_groups WHERE uuid=?",
+            (stack[-1][0],))
+    return list(zip(*stack)) if isinstance(init, str) else stack
+
+def ismember(db, user, group): # group can be a root last stack
+    stack = access_stack(db, group) if isinstance(group, str) else group
     for superset in reversed(stack):
         permission = db.queryone(
             "SELECT user_groups.parent_group, limitations.until "
@@ -50,6 +57,7 @@ class AccessRoot(AccessRouter):
         for group in self.groups:
             group.register(app)
 
+    # TODO: the group doesn't need an owner if all invites are API calls
     def __call__(self, ownership_method, owner_id, name, sep="."):
         return AccessGroup(name, GroupInfo(
             self.bind, self.db, (ownership_method, owner_id), sep))
@@ -74,36 +82,38 @@ class AccessRoot(AccessRouter):
         if info is None:
             db.close()
             flask.abort(410)
-        remove = lambda x: db.execute(
-            "DELETE FROM invitations WHERE uuid=?", (x,))
         now = time.time()
+        # invite hasn't expired
         if info[2] is not None and info[2] < now:
-            remove(invite)
+            db.execute("DELETE FROM invitations WHERE uuid=?", (invite,))
             db.commit().close()
             flask.abort(401)
-        if info[4] is not None and info[4] == 0:
-            db.close()
-            flask.abort(404)
-        if ismember(db, user, info[1]):
+        # can't accept the same invite twice
+        accepted = db.queryone(
+            "SELECT EXISTS(SELECT 1 FROM limitations "
+            "WHERE member=? AND depletes=? LIMIT 1)",
+            (user, invite))
+        if accepted[0]:
             db.close()
             flask.abort(400)
-        else:
-            child = info[0]
-            while child is not None:
-                parent = db.queryone(
-                    "SELECT member, parent_group FROM user_groups "
-                    "WHERE child_group=?", (child,))
-                if parent is None:
-                    break
-                if parent[0] == user:
-                    db.close()
-                    flask.abort(412)
-                child = parent[1]
+        # can't accept your own invite
+        child = info[0]
+        while child is not None:
+            parent = db.queryone(
+                "SELECT member, parent_group FROM user_groups "
+                "WHERE child_group=?", (child,))
+            if parent is None:
+                break
+            if parent[0] == user:
+                db.close()
+                flask.abort(412)
+            child = parent[1]
+        # lower depletions
         if info[4] is not None:
             lower, count, parent = invite, info[4], info[6]
             while count is not None:
                 if count == 0:
-                    db.commit()
+                    # none left, don't execute depletions
                     db.close()
                     flask.abort(404)
                 else:
@@ -122,11 +132,6 @@ class AccessRoot(AccessRouter):
             "VALUES (?, ?, ?)", (info[0], user, info[1]))
         until = info[3] and (info[3] if info[3] > 0 else now - info[3])
         depth = info[7] and (info[7] - 1)
-        print(
-            "INSERT INTO limitations"
-            "(member, parent_group, until, spots, depletes, depth) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user, info[0], until, info[5], invite, depth))
         db.execute(
             "INSERT INTO limitations"
             "(member, parent_group, until, spots, depletes, depth) "
@@ -134,6 +139,76 @@ class AccessRoot(AccessRouter):
             (user, info[0], until, info[5], invite, depth))
         db.commit().close()
         return flask.redirect(info[8])
+
+    group_query=(
+        "SELECT user_groups.access_group, user_groups.child_group, "
+        "user_groups.parent_group, until, spots, depletes, depth "
+        "FROM limitations LEFT JOIN user_groups "
+        "ON limitations.member=user_groups.member "
+        "AND limitations.parent_group=user_groups.parent_group "
+        "WHERE active=1 AND ")
+    info_keys = (
+        "access_group", "child_group", "parent_group", "until", "spots",
+        "depletes", "depth", "depletion_bound", "subgroups")
+
+    @staticmethod
+    def depletion_bound(count, parent, db):
+        minimum = count
+        while parent is not None:
+            count, parent = db.queryone(
+                "SELECT invitees, depletes FROM invitations "
+                "WHERE uuid=?", (parent,))
+            if count is not None:
+                minimum = count if minimum is None else min(count, minimum)
+        return minimum
+
+    def user_groups(self, user=None, db=None):
+        user = user or flask.session["user"]
+        db, close = db or self.db().begin(), db is None
+        info = db.queryall(self.group_query + "user_groups.member=?", (user,))
+        for option in info:
+            option.append(self.depletion_bound(option[4], option[5]), db)
+            access = db.queryone(
+                "SELECT group_name FROM access_groups WHERE uuid=?", (info[0],))
+            access = [[info[0], access]]
+            subgroups = access
+            while access:
+                children = []
+                for parent, _ in access:
+                    children += db.queryall(
+                        "SELECT uuid, group_name FROM access_groups "
+                        "WHERE parent_group=?", (parent,))
+                access = children
+                subgroups += access
+            option.append(subgroups)
+        if close:
+            db.close()
+        return [dict(zip(self.info_keys, option)) for option in info]
+
+    def group_access(self, group, user=None, db=None):
+        user = user or flask.session["user"]
+        db, close = db or self.db().begin(), db is None
+        group_name = db.queryone(
+            "SELECT group_name FROM access_group WHERE uuid=?", (group,))
+        stack = access_stack(db, (group, group_name), ("group_name",))
+        query = " OR ".join(("user_groups.access_group=?",) * len(stack))
+        info = db.queryall(
+            self.group_query + "(" + query + ")", stack)
+        for option in info:
+            option.append(self.depletion_bound(option[2], option[4], db))
+            option.append(list(reversed(stack[:stack.index(option[0]) + 1])))
+        if close:
+            db.close()
+        return info
+
+    @AccessRouter.route("/invite")
+    @AccessRouter.route("/invite/<group>")
+    def invite(self, group=None):
+        ...
+
+    # TODO: invitation page
+    # TODO: creation API endpoint
+    # TODO: access group deauthorization
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):

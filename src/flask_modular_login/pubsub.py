@@ -245,12 +245,10 @@ class ServerWS(Handshake):
         asyncio.run(self.main())
 
 class ClientWS(Handshake):
-    # TODO
-    # maybe timeout after long silence and reconnect when a request hits
-    # probably add versioning to messages/events to allow upgrades w/o downtime
-    # need one instance per thread, maybe use multiprocessing to fork
-    #     when the client interface is created in LoginBuilder subclass
-    # update unix_path to have one socket per thread
+    # TODO: maybe timeout after long silence and reconnect when a request hits
+    # TODO: add versioning to messages/events to allow upgrades w/o downtime
+    # TODO: need one instance per thread, maybe use multiprocessing to fork
+    # TODO: update unix_path to have one socket per thread
 
     def __init__(self, base_url, db, cache=None, root_path=None):
         super.__init__(root_path)
