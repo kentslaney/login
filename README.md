@@ -163,13 +163,14 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ## TODOs
+- so much QA (and almost certainly debugging)
 - rename parent\_group for either access\_groups or limitations
 - throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
 - \[should be able to expose desktop ML work starting here]
 - invite links
 - better HTML interfaces/more informative errors/request access pages
-- \[JND needs to be here but doesn't need pub/sub]
+- \[JND needs to be here but doesn't technically need pub/sub (risks compute)]
 - linked accounts
 - \[notes app]
 - linked list invites to access multiple groups
@@ -183,4 +184,5 @@ integration. To change which are supported, modify the interface connected in
 https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
 - consider sql alchemy
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
-- ...unit tests
+- ...unit tests (ideally higher up but realistically here)
+
