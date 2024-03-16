@@ -121,13 +121,13 @@ class AccessRoot(AccessRouter):
         info = db.queryone(
             "SELECT inviter, access_group, acceptance_expiration, "
             "access_expiration, invitees, plus, depletes, depth, deauthorizes, "
-            "implies, redirect FROM invitations WHERE uuid=?", (invite,))
+            "implies, redirect FROM invitations WHERE uuid=?", (invite,), True)
         if info is None:
             db.close()
             flask.abort(410)
         now = time.time()
         # invite hasn't expired
-        if info[2] is not None and info[2] < now:
+        if info.access_expiration is not None and info.access_expiration < now:
             db.execute("DELETE FROM invitations WHERE uuid=?", (invite,))
             db.commit().close()
             flask.abort(401)
@@ -140,11 +140,11 @@ class AccessRoot(AccessRouter):
             db.close()
             flask.abort(400)
         # can't accept your own invite
-        child = info[0]
+        child = info.inviter
         while child is not None:
             parent = db.queryone(
                 "SELECT member, parent_group FROM user_groups "
-                "WHERE child_group=?", (child,))
+                "WHERE child_group=?", (info.child,))
             if parent is None:
                 break
             if parent[0] == user:
@@ -152,8 +152,8 @@ class AccessRoot(AccessRouter):
                 flask.abort(412)
             child = parent[1]
         # lower depletions
-        if info[4] is not None:
-            lower, count, parent = invite, info[4], info[6]
+        if info.invitees is not None:
+            lower, count, parent = invite, info.invitees, info.depletes
             while count is not None:
                 if count == 0:
                     # none left, don't execute depletions
@@ -173,18 +173,20 @@ class AccessRoot(AccessRouter):
                         "WHERE uuid=?", (parent,))
         db.execute(
             "INSERT INTO user_groups(parent_group, member, access_group) "
-            "VALUES (?, ?, ?)", (info[0], user, info[1]))
-        until = info[3] and (info[3] if info[3] > 0 else now - info[3])
-        depth = info[7] and (info[7] - 1)
+            "VALUES (?, ?, ?)", (info.inviter, user, info.access_group))
+        until = info.access_expiration and (
+            info.access_expiration if info.access_expiration > 0 else
+            now - info.access_expiration)
+        depth = info.depth and (info.depth - 1)
         db.execute(
             "INSERT INTO limitations(member, parent_group, until, spots, via, "
             "depletes, depth, deauthorizes) VALUES (?, ?, ?, ?, ?, ?, ?)", (
-                user, info[0], until, info[5], invite, info[6] is None, depth,
-                info[8]))
-        if info[9] is not None:
-            return self.accept(info[9], db)
+                user, info.inviter, until, info.plus, invite,
+                info.depletes is not None, depth, info.deauthorizes))
+        if info.implies is not None:
+            return self.accept(info.implies, db)
         db.commit().close()
-        return flask.redirect(info[10])
+        return flask.redirect(info.redirect)
 
     group_query=(
         "SELECT user_groups.access_group, user_groups.child_group, "
@@ -215,12 +217,12 @@ class AccessRoot(AccessRouter):
         db, close = db or self.db().begin(), db is None
         info = db.queryall(self.group_query + "user_groups.member=?", (user,))
         for option in info:
-            # spots, via, depletes
             option.append(self.depletion_bound(
-                option[5], option[6], option[7], db))
-            access = db.queryone(
-                "SELECT group_name FROM access_groups WHERE uuid=?", (info[0],))
-            access = [[info[0], access]]
+                option.spots, option.via, option.depletes, db))
+            access_name = db.queryone(
+                "SELECT group_name FROM access_groups WHERE uuid=?",
+                (option.access_group,))
+            access = [[options.access_group, access_name]]
             subgroups = access
             while access:
                 children = []
@@ -240,15 +242,19 @@ class AccessRoot(AccessRouter):
         db, close = db or self.db().begin(), db is None
         group_name = db.queryone(
             "SELECT group_name FROM access_group WHERE uuid=?", (group,))
-        stack = access_stack(db, (group, group_name), ("group_name",))
-        query = " OR ".join(("user_groups.access_group=?",) * len(stack))
+        if group_name is None:
+            flask.abort(400)
+        stack = access_stack(db, (group, group_name[0]), ("group_name",))
+        query = ", ".join(("?",) * len(stack))
         info = db.queryall(
-            self.group_query + "(" + query + ")", stack)
+            self.group_query + "user_groups.access_group IN (" + ", ".join(
+                ("?",) * len(stack)) + ")", stack, True)
         for option in info:
             # spots, via, depletes
             option.append(self.depletion_bound(
-                option[5], option[6], option[7], db))
-            option.append(list(reversed(stack[:stack.index(option[0]) + 1])))
+                info.spots, info.via, info.depletes, db))
+            option.append(list(reversed(
+                stack[:stack.index(info.access_group) + 1])))
         if close:
             db.close()
         return info
@@ -265,11 +271,11 @@ class AccessRoot(AccessRouter):
             "access_expiration": int,
             "invitees": int,
             "plus": int,
-            "via": str
+            "via": str,
             "depletes": bool,
             "depth": int,
             "deauthorizes": bool,
-        ]}}
+        }]}
 
     @AccessRouter.route("/allow", methods=["POST"])
     def create(self):
@@ -282,7 +288,7 @@ class AccessRoot(AccessRouter):
             limits = db.queryone(
                 "SELECT until, spots, depletes, depth, deauthorizes "
                 "FROM limitations WHERE via=? AND member=? AND active=1",
-                (invite.via, user))
+                (invite.via, user), True)
             if limits is None:
                 flask.abort(wrappers.Response("invalid source", code=401))
             # acceptance expiration and access expiration are before until

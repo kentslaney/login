@@ -152,18 +152,23 @@ class HeadlessDB:
         return db[self.database]
 
     # TODO: add paging before use at scale
-    def queryall(self, query, args=()):
+    def queryall(self, query, args=(), names=False):
         cur = self.get().cursor()
         cur.execute(query, args)
         rv = cur.fetchall()
         cur.close()
+        if names:
+            return [self.names(query, r) for r in rv]
         return rv
 
-    def queryone(self, query, args=()):
+    def queryone(self, query, args=(), names=False):
         cur = self.get().cursor()
         cur.execute(query, args)
         rv = cur.fetchone()
+        row = cur.lastrowid
         cur.close()
+        if names and rv:
+            return self.names(query, rv, row)
         return rv
 
     def execute(self, query, args=()):
@@ -193,6 +198,45 @@ class HeadlessDB:
         if db is not None:
             for con in db.values():
                 con.close()
+
+    # Has limited reliability, but accuracy is per query so use it if it works.
+    # If correctness becomes an issue, SQL syntax is a well specified state
+    #     machine which can be parsed if needbe.
+    # Current limitations include aliased expressions.
+    # Should fail if it can't parse the values.
+    @staticmethod
+    def names(query, values, rowid=None):
+        words = query.lower().split()
+        assert words[0] == "select"
+        assert words[1] not in ("distinct", "all")
+        names = []
+        terms = iter(sum(filter(None, (
+            sum(([j, ","] for j in i.split(",")), [])[:-1]
+            for i in words[1:]), [])))
+        for word in terms:
+            assert ord('a') <= ord(word[0]) <= ord('z')
+            # https://www.sqlite.org/syntax/expr.html
+            assert word not in (
+                "null", "true", "false", "current_time", "current_date",
+                "current_timestamp", "is", "not", "and", "or", "in", "match",
+                "like", "regexp", "glob", "collate", "glob", "isnull",
+                "notnull", "between", "case", "cast", "raise")
+            # attr problems
+            assert all(i not in word for i in "()*'\"- ")
+            names.append(word.rsplit(".", 1)[-1])
+            word = next(terms)
+            if word != ",":
+                assert not word.startswith("(")
+                if word == "as":
+                    names[-1] = next(terms)
+                    word = next(terms)
+                    if word == ",":
+                        continue
+                break
+        assert len(names) == len(values)
+        obj = collections.namedtuple(
+            "row" + ("" if rowid is None else str(rowid)), names)
+        return obj(**dict(zip(names, values)))
 
     def db_init_hook(self):
         pass
