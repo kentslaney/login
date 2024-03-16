@@ -163,6 +163,7 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ## TODOs
+- rename parent\_group for either access\_groups or limitations
 - throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
 - \[should be able to expose desktop ML work starting here]
@@ -172,10 +173,12 @@ integration. To change which are supported, modify the interface connected in
 - linked accounts
 - \[notes app]
 - linked list invites to access multiple groups
+- purge access tokens from remote clients after they're stale
+- custom login BP (for the sake of public MVPs) (and data privacy geeks)
 - invite option to limit sharing by total use time
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - flask-dance implementation for apple OAuth
 ([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
 [Reference implementation](https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
-- horizontal scaling
+- horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - ...unit tests

@@ -62,11 +62,15 @@ CREATE TABLE invitations (
 	plus INT,
 	depletes TEXT,
 	depth INT,
+	deauthorizes BOOLEAN DEFAULT 0,
+	implies TEXT,
 	redirect TEXT,
 	PRIMARY KEY(uuid),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
 	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
+	FOREIGN KEY(implies) REFERENCES invitations(uuid),
+	CHECK((implies IS NULL) <> (redirect IS NULL))
 );
 CREATE TABLE limitations (
 	member TEXT,
@@ -74,9 +78,11 @@ CREATE TABLE limitations (
 	active BOOLEAN DEFAULT 1,
 	until INT,
 	spots INT,
-	depletes TEXT,
+	via TEXT,
+	depletes BOOLEAN,
 	depth INT,
+	deauthorizes BOOLEAN DEFAULT 0,
 	FOREIGN KEY(parent_group, member) REFERENCES user_groups(
 		parent_group, member),
-	FOREIGN KEY(depletes) REFERENCES invitations(uuid)
+	FOREIGN KEY(via) REFERENCES invitations(uuid)
 );
