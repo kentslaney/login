@@ -128,8 +128,8 @@ class AccessRoot(AccessRouter):
         now = time.time()
         # invite hasn't expired
         if info.access_expiration is not None and info.access_expiration < now:
-            db.execute("DELETE FROM invitations WHERE uuid=?", (invite,))
-            db.commit().close()
+            db.close()
+            self.db().execute("DELETE FROM invitations WHERE uuid=?", (invite,))
             flask.abort(401)
         # can't accept the same invite twice
         accepted = db.queryone(
@@ -215,10 +215,12 @@ class AccessRoot(AccessRouter):
     def user_groups(self, user=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
-        info = db.queryall(self.group_query + "user_groups.member=?", (user,))
+        info = db.queryall(
+            self.group_query + "user_groups.member=?", (user,), True)
         for option in info:
             option.append(self.depletion_bound(
                 option.spots, option.via, option.depletes, db))
+            # could be added to the info query with an extra join
             access_name = db.queryone(
                 "SELECT group_name FROM access_groups WHERE uuid=?",
                 (option.access_group,))
@@ -243,6 +245,7 @@ class AccessRoot(AccessRouter):
         group_name = db.queryone(
             "SELECT group_name FROM access_group WHERE uuid=?", (group,))
         if group_name is None:
+            db.close()
             flask.abort(400)
         stack = access_stack(db, (group, group_name[0]), ("group_name",))
         query = ", ".join(("?",) * len(stack))
@@ -252,9 +255,9 @@ class AccessRoot(AccessRouter):
         for option in info:
             # spots, via, depletes
             option.append(self.depletion_bound(
-                info.spots, info.via, info.depletes, db))
+                option.spots, option.via, option.depletes, db))
             option.append(list(reversed(
-                stack[:stack.index(info.access_group) + 1])))
+                stack[:stack.index(option.access_group) + 1])))
         if close:
             db.close()
         return info
@@ -290,6 +293,7 @@ class AccessRoot(AccessRouter):
                 "FROM limitations WHERE via=? AND member=? AND active=1",
                 (invite.via, user), True)
             if limits is None:
+                db.close()
                 flask.abort(wrappers.Response("invalid source", code=401))
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
@@ -297,6 +301,7 @@ class AccessRoot(AccessRouter):
             # plus < spots
             # 0 < depth < via.depth
             # invite deauthorizes <= limitations.deauthorizes
+        db.commit().close()
 
     # TODO: invitation page
     # TODO: creation API endpoint

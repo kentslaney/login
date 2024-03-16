@@ -219,8 +219,8 @@ class HeadlessDB:
             assert word not in (
                 "null", "true", "false", "current_time", "current_date",
                 "current_timestamp", "is", "not", "and", "or", "in", "match",
-                "like", "regexp", "glob", "collate", "glob", "isnull",
-                "notnull", "between", "case", "cast", "raise")
+                "like", "regexp", "glob", "collate", "isnull", "notnull",
+                "between", "case", "cast", "raise")
             # attr problems
             assert all(i not in word for i in "()*'\"- ")
             names.append(word.rsplit(".", 1)[-1])
@@ -234,6 +234,7 @@ class HeadlessDB:
                         continue
                 break
         assert len(names) == len(values)
+        assert len(names) == len(set(names))
         obj = collections.namedtuple(
             "row" + ("" if rowid is None else str(rowid)), names)
         return obj(**dict(zip(names, values)))
