@@ -180,8 +180,7 @@ integration. To change which are supported, modify the interface connected in
 - flask-dance implementation for apple OAuth
 ([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
 [Reference implementation](
-https://github.com/python-social-auth/social-core/blob/master/social_core/
-backends/apple.py))
+https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
 - consider sql alchemy
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - ...unit tests
