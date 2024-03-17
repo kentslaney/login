@@ -249,6 +249,7 @@ class ClientWS(Handshake):
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
     # TODO: need one instance per thread, maybe use multiprocessing to fork
     # TODO: update unix_path to have one socket per thread
+    # TODO: access queries
 
     def __init__(self, base_url, db, cache=None, root_path=None):
         super.__init__(root_path)
@@ -321,3 +322,4 @@ class ClientBP(Handshake):
 
     def refresh(self, refresh):
         return asyncio.run(self.reload_access(refresh))
+

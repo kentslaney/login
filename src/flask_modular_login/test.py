@@ -62,3 +62,4 @@ def make_test_blueprint(storage, **kw):
     return test_bp
 
 test = LocalProxy(lambda: flask.g.flask_dance_test)
+

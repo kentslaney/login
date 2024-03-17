@@ -46,3 +46,4 @@ class LoginBlueprint(OAuthBlueprint):
                 sess["authtime"]).strftime("%m/%d/%Y %H:%M:%S UTC")
             sess["current"] = sess["token"] == flask.session["refresh"]
         return flask.render_template("sessions.html", active=active)
+

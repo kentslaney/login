@@ -88,3 +88,4 @@ CREATE TABLE limitations (
 		parent_group, member),
 	FOREIGN KEY(via) REFERENCES invitations(uuid)
 );
+

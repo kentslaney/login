@@ -187,3 +187,4 @@ class DBStore(BaseStorage):
             "DELETE FROM active WHERE refresh=?", (refresh,))
         self.cache.delete(refresh)
         db.commit().close()
+

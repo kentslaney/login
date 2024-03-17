@@ -40,3 +40,4 @@ def remap(old, mapping):
             r = r if r is None else r.get(i, None)
         res[k] = r
     return res
+

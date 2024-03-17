@@ -90,3 +90,4 @@ class OAuthBlueprint(flask.Blueprint):
                 flask.session, flask.sessions.NullSession):
             return flask.session
         return app.session_interface.open_session(app, flask.request)
+

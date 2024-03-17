@@ -151,7 +151,7 @@ class HeadlessDB:
                 con.set_trace_callback(print)
         return db[self.database]
 
-    # TODO: add paging before use at scale
+    # TODO: add paging or switch to iterator before using at scale
     def queryall(self, query, args=(), names=False):
         cur = self.get().cursor()
         cur.execute(query, args)
@@ -315,3 +315,4 @@ def secret_key(paths = key_paths):
         secret = os.urandom(24)
         f.write(secret)
     return secret
+

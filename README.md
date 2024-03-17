@@ -165,6 +165,7 @@ integration. To change which are supported, modify the interface connected in
 ## TODOs
 - so much QA (and almost certainly debugging)
 - rename parent\_group for either access\_groups or limitations
+- switch out sql keywords access and depth
 - throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
 - \[should be able to expose desktop ML work starting here]
@@ -183,6 +184,9 @@ integration. To change which are supported, modify the interface connected in
 [Reference implementation](
 https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
 - consider sql alchemy
+- restructure README to allow quickest start possible (package w/ test first)
+    - will that obscure the reason to use this repo?
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
+- type hints would be helpful
 - ...unit tests (ideally higher up but realistically here)
 

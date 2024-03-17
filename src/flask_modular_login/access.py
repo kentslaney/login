@@ -257,7 +257,6 @@ class AccessRoot(AccessRouter):
             self.group_query + "user_groups.access_group IN (" + ", ".join(
                 ("?",) * len(stack)) + ")", stack, True)
         for option in info:
-            # spots, via, depletes
             option.append(self.depletion_bound(
                 option.spots, option.via, option.depletes, db))
             option.append(list(reversed(
@@ -351,9 +350,18 @@ class AccessRoot(AccessRouter):
         finally:
             db.commit().close()
 
+    @AccessRouter.route("/remove", methods=["POST"])
+    def remove(self):
+        ...
+        # check for deauthorization access
+        # set active to 0
+
     # TODO: invitation page
+    # TODO: deauthorization setting where it only applies to child user_groups
     # TODO: access group deauthorization
+    # TODO: deauthorization page and options display
     # TODO: module interface based access
+    # TODO: accept invitation page as part of implied
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):
@@ -408,9 +416,10 @@ class AccessGroup:
         db.close()
         return res
 
-    # TODO: strict ordering? (see Google Zanzibar)
+    # TODO: strict ordering (see Google Zanzibar) using read/write decorators?
     def vet(self, app, user):
         db = self.info.db(app).begin()
         res = ismember(db, user, tuple(reversed([i.uuid for i in self.stack])))
         db.close()
         return res
+
