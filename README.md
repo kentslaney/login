@@ -162,6 +162,10 @@ integration. To change which are supported, modify the interface connected in
 `src/platforms.py`. Removing items can be done by commenting out lines in the
 `methods` dictionary.
 
+```bash
+echo "$(grep TODO -r src && grep "^#\+ TODO" README.md -A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
+```
+
 ## TODOs
 - so much QA (and almost certainly debugging)
 - rename parent\_group for either access\_groups or limitations
@@ -169,15 +173,15 @@ integration. To change which are supported, modify the interface connected in
 - throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
 - \[should be able to expose desktop ML work starting here]
-- invite links
+- invite links (and QR codes, with a /qr link to switch devices after login)
 - better HTML interfaces/more informative errors/request access pages
 - \[JND needs to be here but doesn't technically need pub/sub (risks compute)]
 - linked accounts
 - \[notes app]
-- linked list invites to access multiple groups
 - purge access tokens from remote clients after they're stale
 - custom login BP (for the sake of public MVPs) (and data privacy geeks)
 - invite option to limit sharing by total use time
+- include `X-API-Version` header to enable easier upgrades
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - flask-dance implementation for apple OAuth
 ([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
@@ -188,5 +192,6 @@ https://github.com/python-social-auth/social-core/blob/master/social_core/backen
     - will that obscure the reason to use this repo?
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - type hints would be helpful
+- check indicies
 - ...unit tests (ideally higher up but realistically here)
 

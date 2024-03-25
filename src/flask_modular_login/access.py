@@ -1,5 +1,4 @@
 import flask, uuid, collections, urllib.parse, time, json
-import werkzeug.wrappers.response as wrappers
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -38,6 +37,30 @@ def ismember(db, user, group): # group can be a root last stack
             else:
                 return (superset, permission[0])
 
+def descendants(db, user):
+    results = []
+    children = db.queryall(
+        "SELECT child_group FROM user_groups WHERE member=?", (user,), True)
+    while children:
+        children = db.queryall(
+            "SELECT parent_group, child_group, member, access_group " +
+            "FROM user_groups WHERE parent_group IN (" +
+            ", ".join(("?",) * len(children)) +
+            ")", filter(None, [child.child_group for child in children]), True)
+        results += children
+    return results
+
+def isdescendant(db, user, parent_group):
+    while True:
+        parent = db.queryone(
+            "SELECT member, parent_group FROM user_groups WHERE child_group=?",
+            (parent_group,), True)
+        if parent is None:
+            return False
+        if parent.member == user:
+            return True
+        parent_group = parent.parent_group
+
 def json_payload(self, value, template):
     def oxford_comma(terms):
         return " and ".join(terms) if len(terms) < 3 else \
@@ -46,8 +69,12 @@ def json_payload(self, value, template):
     def ensure(payload, template, qualname=""):
         part_name = f"payload" + (qualname or "_part_" + {qualname[1:]})
         requires = payload if type(payload) == type else type(template)
+        if requires == set:
+            if payload not in template:
+                flask.abort(flask.Response("invalid enum", code=400))
+            return payload
         if not isinstance(template, requires):
-            flask.abort(wrappers.Response(
+            flask.abort(flask.Response(
                 f"payload should be {requires}", code=400))
         if requires == dict:
             if template.keys() != payload.keys():
@@ -57,7 +84,7 @@ def json_payload(self, value, template):
                 xor = {missing: "is missing ", extra: "should not contain "}
                 message = part_name + " " + " and ".join(
                     v + k for k, v in xor if k)
-                flask.abort(wrappers.Response(message, code=400))
+                flask.abort(flask.Response(message, code=400))
             ordered_names = tuple(sorted(template.keys()))
             obj = collections.namedtuple(part_name, ordered_names)
             return obj(**{
@@ -74,7 +101,7 @@ def json_payload(self, value, template):
     try:
         payload = json.loads(value)
     except json.decoder.JSONDecodeError:
-        flask.abort(wrappers.Response("invalid JSON", code=400))
+        flask.abort(flask.Response("invalid JSON", code=400))
     return ensure(payload, template)
 
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
@@ -107,6 +134,7 @@ class AccessRoot(AccessRouter):
             group.register(app)
 
     def authorize(self):
+        # repeated from LoginBuilder
         if not authorized():
             if flask.request.method == "GET":
                 return flask.redirect(
@@ -127,7 +155,7 @@ class AccessRoot(AccessRouter):
         if info is None:
             db.close()
             flask.abort(410)
-        if info.implied and not implied:
+        if info.implied == 1 and not implied:
             db.close()
             flask.abort(400)
         now = time.time()
@@ -181,7 +209,7 @@ class AccessRoot(AccessRouter):
             "VALUES (?, ?, ?)", (info.inviter, user, info.access_group))
         until = info.access_expiration
         if until is not None and until < 0:
-            until = min(now + until, access_limit)
+            until = min(now + until, info.access_limit)
         depth = info.depth and (info.depth - 1)
         db.execute(
             "INSERT INTO limitations(member, parent_group, until, spots, via, "
@@ -220,15 +248,13 @@ class AccessRoot(AccessRouter):
     def user_groups(self, user=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
-        info = db.queryall(
+        results, info = [], db.queryall(
             self.group_query + "user_groups.member=?", (user,), True)
         for option in info:
-            option.append(self.depletion_bound(
-                option.spots, option.via, option.depletes, db))
             access_name = db.queryone(
                 "SELECT group_name FROM access_groups WHERE uuid=?",
                 (option.access_group,))
-            access = [[options.access_group, access_name]]
+            access = [[option.access_group, access_name]]
             subgroups = access
             while access:
                 children = []
@@ -238,7 +264,8 @@ class AccessRoot(AccessRouter):
                         "WHERE parent_group=?", (parent,))
                 access = children
                 subgroups += access
-            option.append(subgroups)
+            results += option + (self.depletion_bound(
+                option.spots, option.via, option.depletes, db), subgroups)
         if close:
             db.close()
         return [dict(zip(self.info_keys, option)) for option in info]
@@ -271,7 +298,9 @@ class AccessRoot(AccessRouter):
         ...
 
     creation_args = {
-        "redirect": str, "invitations": [{
+        "redirect": str,
+        "confirm": bool,
+        "invitations": [{
             "access_group": str,
             "acceptance_expiration": int,
             "access_expiration": int,
@@ -280,7 +309,7 @@ class AccessRoot(AccessRouter):
             "via": str,
             "depletes": bool,
             "depth": int,
-            "deauthorizes": bool,
+            "deauthorizes": {0, 1, 2},
         }]}
 
     @AccessRouter.route("/allow", methods=["POST"])
@@ -290,78 +319,88 @@ class AccessRoot(AccessRouter):
         db = self.db().begin()
         if len(payload.invitations) == 0:
             db.close()
-            flask.abort(wrappers.Response("no invites", code=400))
+            flask.abort(flask.Response("no invites", code=400))
         if not payload.redirect:
             db.close()
             # TODO: query URL? could trust client API call and super user
-            flask.abort(wrappers.Response("bad redirect", code=400))
+            flask.abort(flask.Response("bad redirect", code=400))
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
         current_uuid, next_uuid = uuid.uuid4(), None
         for invite, last in reversed(zip(payload.invitations, first)):
             # user accepted via
-            # user has access to group (limitations.active = 1)
+            # via has access to group (limitations.active = 1)
             limits = db.queryone(
                 "SELECT until, spots, depletes, depth, deauthorizes "
                 "FROM limitations WHERE via=? AND member=? AND active=1",
                 (invite.via, user), True)
             if limits is None:
                 db.close()
-                flask.abort(wrappers.Response("invalid source", code=401))
+                flask.abort(flask.Response("invalid source", code=401))
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
             #     (limited by access_limit)
-            if invite.acceptance_expiration > until or \
-                    invite.access_expiration > until:
+            if invite.acceptance_expiration > limits.until or \
+                    invite.access_expiration > limits.until:
                 db.close()
-                flask.abort(wrappers.Response("invalid timing", code=400))
+                flask.abort(flask.Response("invalid timing", code=400))
             # invitees is less than or equal to depletion bound
             if invite.invitees > self.depletion_bound(
                     limits.spots, invite.via, limits.depletes, db):
                 db.close()
-                flask.abort(wrappers.Response("too many invitees", code=400))
+                flask.abort(flask.Response("too many invitees", code=400))
             # plus < spots
             if invite.plus >= limits.spots:
                 db.close()
-                flask.abort(wrappers.Response("too many plus ones", code=400))
+                flask.abort(flask.Response("too many plus ones", code=400))
             # 0 < depth < limits.depth
             if not 0 < invite.depth < limits.depth:
                 db.close()
-                flask.abort(wrappers.Response("invalid depth", code=400))
+                flask.abort(flask.Response("invalid depth", code=400))
             # invite deauthorizes <= limitations.deauthorizes
-            if invite.deauthorizes and not limits.deauthorizes:
+            if invite.deauthorizes > limits.deauthorizes:
                 db.close()
-                flask.abort(wrappers.Response("can't deauthorize", code=401))
+                flask.abort(flask.Response("can't deauthorize", code=401))
             # depletes <= limits.depletes
             if invite.depletes is None and limits.deplets is not None:
                 db.close()
-                flask.abort(wrappers.Response("must deplete", code=401))
-            redirect = next_uuid and invitations.redirect
+                flask.abort(flask.Response("must deplete", code=401))
+            redirect = next_uuid and payload.redirect
             current_uuid, next_uuid = uuid.uuid4(), current_uuid
+            implied = (-1 if payload.confirm else 0) if last else 1
             values.append(invite.limits + (
-                limits.until, not last, redirect, current_uuid, next_uuid))
-        db.executemany(
-            "INSERT INTO invitations("
-            ", ".join(payload.invitations[0]._fields)
-            ", access_limit, implied, redirect, uuid, implies) VALUES ("
-            ", ".join(("?",) * (len(payload.invitations[0]) + 5))
-            ")", values)
+                limits.until, implied, redirect, current_uuid, next_uuid))
         try:
+            db.executemany(
+                "INSERT INTO invitations(" +
+                ", ".join(payload.invitations[0]._fields) +
+                ", access_limit, implied, redirect, uuid, implies) VALUES (" +
+                ", ".join(("?",) * (len(payload.invitations[0]) + 5)) +
+                ")", values)
             return current_uuid
         finally:
-            db.commit().close()
+            try:
+                db.commit()
+            finally:
+                db.close()
+
+    removal_args = {
+        }
 
     @AccessRouter.route("/remove", methods=["POST"])
     def remove(self):
-        ...
-        # check for deauthorization access
+        user = self.authorize()
+        # SELECT deauthorizes FROM 
+        # if deauthorizes is 0
+        #     abort
+        # if deauthorizes is 1
+        #     abort if not isdescendant
         # set active to 0
 
-    # TODO: invitation page
-    # TODO: deauthorization setting where it only applies to child user_groups
     # TODO: access group deauthorization
+    # TODO: create invitation page
+    # TODO: confirm acceptence page (for implies == -1)
     # TODO: deauthorization page and options display
     # TODO: module interface based access
-    # TODO: accept invitation page as part of implied
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):

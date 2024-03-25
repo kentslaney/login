@@ -33,6 +33,7 @@ CREATE TABLE ignore (
 	refresh_time FLOAT
 );
 
+-- TODO: check rowid order to ensure no loops
 CREATE TABLE access_groups (
 	uuid TEXT,
 	group_name TEXT,
@@ -63,16 +64,18 @@ CREATE TABLE invitations (
 	plus INT,
 	depletes TEXT,
 	depth INT,
-	deauthorizes BOOLEAN DEFAULT 0,
+	deauthorizes INT DEFAULT 0, /* 0, 1, 2 */
 	implies TEXT,
-	implied BOOLEAN DEFAULT 0,
+	implied INT DEFAULT 0, /* -1, 0, 1 */
 	redirect TEXT,
 	PRIMARY KEY(uuid),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
 	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
 	FOREIGN KEY(implies) REFERENCES invitations(uuid),
-	CHECK((implies IS NULL) <> (redirect IS NULL))
+	CHECK((implies IS NULL) <> (redirect IS NULL)),
+	CHECK(deauthorizes >= 0 AND deauthorizes <= 2),
+	CHECK(implied >= -1 AND deauthorizes <= 1)
 );
 CREATE TABLE limitations (
 	member TEXT,
@@ -83,9 +86,10 @@ CREATE TABLE limitations (
 	via TEXT,
 	depletes BOOLEAN,
 	depth INT,
-	deauthorizes BOOLEAN DEFAULT 0,
+	deauthorizes INT DEFAULT 0,
 	FOREIGN KEY(parent_group, member) REFERENCES user_groups(
 		parent_group, member),
-	FOREIGN KEY(via) REFERENCES invitations(uuid)
+	FOREIGN KEY(via) REFERENCES invitations(uuid),
+	CHECK(deauthorizes >= 0 AND deauthorizes <= 2)
 );
 

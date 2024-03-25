@@ -41,6 +41,7 @@ class LoginBuilder:
         flask.g.__setattr__(self.g_attr, value)
 
     def bounce(self, group=None):
+        # repeated in AccessRoot
         if group is not None:
             # TODO: request access page
             flask.abort(403)
