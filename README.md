@@ -168,16 +168,13 @@ echo "$(grep TODO -r src && grep "^#\+ TODO" README.md -A `wc -l README.md | sed
 
 ## TODOs
 - so much QA (and almost certainly debugging)
-- rename parent\_group for either access\_groups or limitations
 - switch out sql keywords access and depth
 - throughout: various TODOs in src comments
 - pub/sub deauthenticated tokens for forwarded ports
 - \[should be able to expose desktop ML work starting here]
 - invite links (and QR codes, with a /qr link to switch devices after login)
 - better HTML interfaces/more informative errors/request access pages
-- \[JND needs to be here but doesn't technically need pub/sub (risks compute)]
 - linked accounts
-- \[notes app]
 - purge access tokens from remote clients after they're stale
 - custom login BP (for the sake of public MVPs) (and data privacy geeks)
 - invite option to limit sharing by total use time

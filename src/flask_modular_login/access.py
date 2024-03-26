@@ -23,15 +23,15 @@ def ismember(db, user, group): # group can be a root last stack
     stack = access_stack(db, group) if isinstance(group, str) else group
     for superset in reversed(stack):
         permission = db.queryone(
-            "SELECT user_groups.parent_group, limitations.until "
+            "SELECT limitations.users_group, limitations.until "
             "FROM user_groups LEFT JOIN limitations "
-            "ON user_groups.parent_group=limitations.parent_group "
+            "ON user_groups.child_group=limitations.users_group "
             "WHERE user_groups.member=? AND user_groups.access_group=? AND "
             "limitations.active=1", (user, superset))
         if permission is not None:
             if permission[1] is not None and permission[1] < time.time():
                 db.execute(
-                    "UPDATE limitations SET active=0 WHERE parent_group=?",
+                    "UPDATE limitations SET active=0 WHERE users_group=?",
                     (permission[0],))
                 db.commit()
             else:
@@ -56,9 +56,9 @@ def isdescendant(db, user, parent_group):
             "SELECT member, parent_group FROM user_groups WHERE child_group=?",
             (parent_group,), True)
         if parent is None:
-            return False
+            return None
         if parent.member == user:
-            return True
+            return parent_group
         parent_group = parent.parent_group
 
 def json_payload(self, value, template):
@@ -149,7 +149,7 @@ class AccessRoot(AccessRouter):
         db = db or self.db().begin()
         info = db.queryone(
             "SELECT inviter, access_group, acceptance_expiration, access_limit,"
-            "access_expiration, invitees, plus, depletes, depth, deauthorizes, "
+            "access_expiration, invitees, plus, depletes, dos, deauthorizes, "
             "implies, implied, redirect FROM invitations WHERE uuid=?",
             (invite,), True)
         if info is None:
@@ -167,8 +167,7 @@ class AccessRoot(AccessRouter):
         # can't accept the same invite twice
         accepted = db.queryone(
             "SELECT EXISTS(SELECT 1 FROM limitations "
-            "WHERE member=? AND via=? LIMIT 1)",
-            (user, invite))
+            "WHERE member=? AND via=? LIMIT 1)", (user, invite))
         if accepted[0]:
             db.close()
             flask.abort(400)
@@ -204,18 +203,20 @@ class AccessRoot(AccessRouter):
                     count, parent = db.queryone(
                         "SELECT invitees, depletes FROM invitations "
                         "WHERE uuid=?", (parent,))
+        child_group = str(uuid.uuid4())
         db.execute(
-            "INSERT INTO user_groups(parent_group, member, access_group) "
-            "VALUES (?, ?, ?)", (info.inviter, user, info.access_group))
+            "INSERT INTO user_groups(parent_group, child_group, member, "
+            "access_group) VALUES (?, ?, ?, ?)",
+            (info.inviter, child_group, user, info.access_group))
         until = info.access_expiration
         if until is not None and until < 0:
             until = min(now + until, info.access_limit)
-        depth = info.depth and (info.depth - 1)
+        dos = info.dos and (info.dos - 1)
         db.execute(
-            "INSERT INTO limitations(member, parent_group, until, spots, via, "
-            "depletes, depth, deauthorizes) VALUES (?, ?, ?, ?, ?, ?, ?)", (
-                user, info.inviter, until, info.plus, invite,
-                info.depletes is not None, depth, info.deauthorizes))
+            "INSERT INTO limitations(users_group, until, spots, via, "
+            "depletes, dos, deauthorizes) VALUES (?, ?, ?, ?, ?, ?, ?)", (
+                child_group, until, info.plus, invite,
+                info.depletes is not None, dos, info.deauthorizes))
         if info.implies is not None:
             return self.accept(info.implies, db, True)
         db.commit().close()
@@ -223,14 +224,13 @@ class AccessRoot(AccessRouter):
 
     group_query=(
         "SELECT user_groups.access_group, user_groups.child_group, "
-        "user_groups.parent_group, until, spots, via, depletes, depth "
+        "user_groups.parent_group, until, spots, via, depletes, dos "
         "FROM limitations LEFT JOIN user_groups "
-        "ON limitations.member=user_groups.member "
-        "AND limitations.parent_group=user_groups.parent_group "
+        "ON limitations.users_group=user_groups.child_group "
         "WHERE active=1 AND ")
     info_keys = (
         "access_group", "child_group", "parent_group", "until", "spots",
-        "depletes", "depth", "depletion_bound", "subgroups")
+        "depletes", "dos", "depletion_bound", "subgroups")
 
     @staticmethod
     def depletion_bound(count, parent, depletes, db):
@@ -308,7 +308,7 @@ class AccessRoot(AccessRouter):
             "plus": int,
             "via": str,
             "depletes": bool,
-            "depth": int,
+            "dos": int,
             "deauthorizes": {0, 1, 2},
         }]}
 
@@ -330,8 +330,10 @@ class AccessRoot(AccessRouter):
             # user accepted via
             # via has access to group (limitations.active = 1)
             limits = db.queryone(
-                "SELECT until, spots, depletes, depth, deauthorizes "
-                "FROM limitations WHERE via=? AND member=? AND active=1",
+                "SELECT until, spots, depletes, dos, deauthorizes "
+                "FROM limitations LEFT JOIN user_groups "
+                "ON limitations.users_group=user_groups.child_group "
+                "WHERE via=? AND user_groups.member=? AND active=1",
                 (invite.via, user), True)
             if limits is None:
                 db.close()
@@ -352,10 +354,11 @@ class AccessRoot(AccessRouter):
             if invite.plus >= limits.spots:
                 db.close()
                 flask.abort(flask.Response("too many plus ones", code=400))
-            # 0 < depth < limits.depth
-            if not 0 < invite.depth < limits.depth:
+            # 0 < dos < limits.dos
+            if not 0 < invite.dos < limits.dos:
                 db.close()
-                flask.abort(flask.Response("invalid depth", code=400))
+               flask.abort(flask.Response(
+                   "invalid degrees of separation", code=400))
             # invite deauthorizes <= limitations.deauthorizes
             if invite.deauthorizes > limits.deauthorizes:
                 db.close()
@@ -384,19 +387,43 @@ class AccessRoot(AccessRouter):
                 db.close()
 
     removal_args = {
+            "invitation": str,
+            "member": str,
         }
 
     @AccessRouter.route("/remove", methods=["POST"])
     def remove(self):
         user = self.authorize()
-        # SELECT deauthorizes FROM 
-        # if deauthorizes is 0
-        #     abort
-        # if deauthorizes is 1
-        #     abort if not isdescendant
-        # set active to 0
+        payload = json_payload(flask.request.body, self.removal_args)
+        db = self.db().begin()
+        access_group = db.queryone(
+            "SELECT access_group FROM invitations WHERE uuid=?",
+            (payload.invitation,))
+        if access_group is None:
+            flask.abort(400)
+        privledges = db.queryone(
+            "SELECT MAX(SELECT deauthorizes FROM limitations " +
+            "LEFT JOIN user_groups " +
+            "ON limitations.users_group=user_groups.child_group " +
+            "WHERE user_groups.member=? AND user_groups.access_group IN (" +
+            ", ".join(("?",) * len(stack)) +
+            "))", [user] + access_stack(db, access_group[0]))
+        if privledges is None or privledges[0] == 0:
+            db.close()
+            flask.abort(401)
+        if privledges[1] == 1:
+            users_group = db.queryone(
+                "SELECT users_group FROM limitations WHERE member=? AND via=?",
+                (payload.member, payload.invitation))
+            if users_group is None or not isdescendant(db, user, parent_group):
+                db.close()
+                flask.abort(401)
+        db.execute(
+            "UPDATE limitations SET active=0 FROM user_groups "
+            "WHERE users_group=child_group AND via=? AND member=?",
+            (payload.invitation, payload.member))
+        db.execute().close()
 
-    # TODO: access group deauthorization
     # TODO: create invitation page
     # TODO: confirm acceptence page (for implies == -1)
     # TODO: deauthorization page and options display
@@ -443,7 +470,7 @@ class AccessGroup:
                     owner = owner[0]
                 db.execute(
                     "INSERT INTO "
-                    "user_groups(parent_group, member, access_group) "
+                    "user_groups(child_group, member, access_group) "
                     "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
         else:
             self.uuid = access_id[0]

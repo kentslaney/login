@@ -63,7 +63,7 @@ CREATE TABLE invitations (
 	invitees INT,
 	plus INT,
 	depletes TEXT,
-	depth INT,
+	dos INT, /* degrees of separation */
 	deauthorizes INT DEFAULT 0, /* 0, 1, 2 */
 	implies TEXT,
 	implied INT DEFAULT 0, /* -1, 0, 1 */
@@ -78,17 +78,15 @@ CREATE TABLE invitations (
 	CHECK(implied >= -1 AND deauthorizes <= 1)
 );
 CREATE TABLE limitations (
-	member TEXT,
-	parent_group TEXT,
+	users_group TEXT,
 	active BOOLEAN DEFAULT 1,
 	until INT,
 	spots INT,
 	via TEXT,
 	depletes BOOLEAN,
-	depth INT,
+	dos INT,
 	deauthorizes INT DEFAULT 0,
-	FOREIGN KEY(parent_group, member) REFERENCES user_groups(
-		parent_group, member),
+	FOREIGN KEY(users_group) REFERENCES user_groups(child_group),
 	FOREIGN KEY(via) REFERENCES invitations(uuid),
 	CHECK(deauthorizes >= 0 AND deauthorizes <= 2)
 );
