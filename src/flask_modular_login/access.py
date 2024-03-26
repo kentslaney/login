@@ -51,7 +51,7 @@ def descendants(db, user):
     return results
 
 def isdescendant(db, user, parent_group):
-    while True:
+    while parent_group:
         parent = db.queryone(
             "SELECT member, parent_group FROM user_groups WHERE child_group=?",
             (parent_group,), True)
@@ -123,10 +123,10 @@ class AccessRoot(AccessRouter):
         for group in self.groups:
             group.register(app)
 
-    # TODO: the group doesn't need an owner if all invites are API calls
-    def __call__(self, ownership_method, owner_id, name, sep="."):
-        return AccessGroup(name, GroupInfo(
-            self.bind, self.db, (ownership_method, owner_id), sep))
+    def __call__(self, name, ownership_method=None, owner_id=None, sep="."):
+        assert (ownership_method is None) == (owner_id is None)
+        owner = owner_id and (ownership_method, owner_id)
+        return AccessGroup(name, GroupInfo(self.bind, self.db, owner, sep))
 
     def bind(self, group):
         self.groups.append(group)
@@ -322,7 +322,6 @@ class AccessRoot(AccessRouter):
             flask.abort(flask.Response("no invites", code=400))
         if not payload.redirect:
             db.close()
-            # TODO: query URL? could trust client API call and super user
             flask.abort(flask.Response("bad redirect", code=400))
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
         current_uuid, next_uuid = uuid.uuid4(), None
@@ -415,7 +414,18 @@ class AccessRoot(AccessRouter):
             users_group = db.queryone(
                 "SELECT users_group FROM limitations WHERE member=? AND via=?",
                 (payload.member, payload.invitation))
-            if users_group is None or not isdescendant(db, user, parent_group):
+            if users_group is None
+                db.close()
+                flask.abort(401)
+            parent_group = isdescendant(db, user, users_group[0])
+            while parent_group:
+                access = db.queryone(
+                    "SELECT deauthorizes FROM limitations WHERE users_group=?",
+                    (parent_group,))
+                if access is not None and access[0] == 1:
+                    break
+                parent_group = isdescendant(db, user, parent_group)
+            if not parent_group:
                 db.close()
                 flask.abort(401)
         db.execute(
@@ -423,6 +433,9 @@ class AccessRoot(AccessRouter):
             "WHERE users_group=child_group AND via=? AND member=?",
             (payload.invitation, payload.member))
         db.execute().close()
+
+    def deauthable(self, user):
+        ...
 
     # TODO: create invitation page
     # TODO: confirm acceptence page (for implies == -1)
@@ -457,7 +470,7 @@ class AccessGroup:
                 "VALUES (?, ?, ?) ON CONFLICT(group_name) DO NOTHING",
                 (self.qualname, parent, uniq))
             self.uuid = uniq
-            if self.root:
+            if self.root and self.info.owner is not None:
                 owner = db.queryone(
                     "SELECT uuid FROM auths WHERE method=? AND platform_id=?",
                     self.info.owner)
