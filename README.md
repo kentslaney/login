@@ -167,7 +167,6 @@ echo "$(grep TODO -r src && grep "^#\+ TODO" README.md -A `wc -l README.md | sed
 ```
 
 ## TODOs
-- switch out sql keyword depth
 - pub/sub deauthenticated tokens for forwarded ports
 - invite link QR codes, with a /qr link to switch devices after login
 - better HTML interfaces/more informative errors/request access pages

@@ -43,7 +43,7 @@ CREATE TABLE access_groups (
 );
 CREATE UNIQUE INDEX group_names ON access_groups(group_name);
 CREATE TABLE user_groups (
-	parent_group TEXT,
+	parents_group TEXT,
 	child_group TEXT,
 	member TEXT,
 	access_group TEXT,
@@ -51,7 +51,7 @@ CREATE TABLE user_groups (
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
 );
 CREATE UNIQUE INDEX shares ON user_groups(child_group);
-CREATE UNIQUE INDEX invited ON user_groups(parent_group, member);
+CREATE UNIQUE INDEX invited ON user_groups(parents_group, member);
 CREATE INDEX membership ON user_groups(member, access_group);
 CREATE TABLE invitations (
 	uuid TEXT,

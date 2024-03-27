@@ -47,13 +47,13 @@ def refresh_access(db, access, refresh, refresh_time, access_timeout, cached):
     if access_timeout and now - refresh_time > access_timeout:
         if cached:
             cur, update = db.queryone(
-                "SELECT access, refresh_time from active WHERE refresh=?",
+                "SELECT access_token, refresh_time from active WHERE refresh=?",
                 (refresh,))
             if cur != access and now - update < access_timeout:
                 return True, False, cur, update
         access = secrets.token_urlsafe(32)
         db.execute(
-            "UPDATE active SET access=?, refresh_time=? "
+            "UPDATE active SET access_token=?, refresh_time=? "
             "WHERE refresh=?", (access, now, refresh))
         return True, False, access, now
     return False, False, access, refresh_time
@@ -99,7 +99,7 @@ class DBStore(BaseStorage):
         session_["name"], session_["picture"] = info["name"], info["picture"]
         self.db.execute(
             "INSERT INTO active"
-            "(uuid, access, refresh, ip, authtime, refresh_time) "
+            "(uuid, access_token, refresh, ip, authtime, refresh_time) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (uniq, secret, refresh, ip, authtime, authtime))
         self.cache.set(refresh, (token, secret, ip, authtime, authtime))
@@ -114,7 +114,7 @@ class DBStore(BaseStorage):
         cached = self.cache.get(refresh)
         if cached is None:
             info = db.queryone(
-                "SELECT auths.token, active.access, active.ip, "
+                "SELECT auths.token, active.access_token, active.ip, "
                 "active.authtime, active.refresh_time "
                 "FROM active LEFT JOIN auths ON auths.uuid=active.uuid "
                 "WHERE active.refresh=?", (refresh,))
@@ -179,8 +179,8 @@ class DBStore(BaseStorage):
         if authtime == None:
             return None
         db.execute(
-            "INSERT INTO revoked(revoked_time, access, authtime, refresh_time) "
-            "VALUES (?, ?, ?, ?)", (
+            "INSERT INTO revoked(revoked_time, access_token, authtime, "
+            "refresh_time) VALUES (?, ?, ?, ?)", (
                 float(time.time()), session_["access"], authtime[0],
                 session_["refresh_time"]))
         db.execute(

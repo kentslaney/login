@@ -43,23 +43,23 @@ def descendants(db, queries):
         "SELECT child_group FROM user_groups WHERE member=?", (queries,), True)
     while children:
         children = db.queryall(
-            "SELECT parent_group, child_group, member, access_group " +
-            "FROM user_groups WHERE parent_group IN (" +
+            "SELECT parents_group, child_group, member, access_group " +
+            "FROM user_groups WHERE parents_group IN (" +
             ", ".join(("?",) * len(children)) +
             ")", filter(None, [child.child_group for child in children]), True)
         results += children
     return results
 
-def isdescendant(db, user, parent_group):
-    while parent_group:
+def isdescendant(db, user, parents_group):
+    while parents_group:
         parent = db.queryone(
-            "SELECT member, parent_group FROM user_groups WHERE child_group=?",
-            (parent_group,), True)
+            "SELECT member, parents_group FROM user_groups WHERE child_group=?",
+            (parents_group,), True)
         if parent is None:
             return None
         if parent.member == user:
-            return parent_group
-        parent_group = parent.parent_group
+            return parents_group
+        parents_group = parent.parents_group
 
 def json_payload(self, value, template):
     def oxford_comma(terms):
@@ -179,7 +179,7 @@ class AccessRoot(AccessRouter):
         child = info.inviter
         while child is not None:
             parent = db.queryone(
-                "SELECT member, parent_group FROM user_groups "
+                "SELECT member, parents_group FROM user_groups "
                 "WHERE child_group=?", (child,))
             if parent is None:
                 break
@@ -209,7 +209,7 @@ class AccessRoot(AccessRouter):
                         "WHERE uuid=?", (parent,))
         child_group = str(uuid.uuid4())
         db.execute(
-            "INSERT INTO user_groups(parent_group, child_group, member, "
+            "INSERT INTO user_groups(parents_group, child_group, member, "
             "access_group) VALUES (?, ?, ?, ?)",
             (info.inviter, child_group, user, info.access_group))
         until = info.access_expiration
@@ -228,13 +228,13 @@ class AccessRoot(AccessRouter):
 
     # selecting columns needed to know what invites selected can create
     group_query=(
-        "SELECT access_group, child_group, parent_group, member, " # user_groups
-        "until, spots, via, depletes, dos, deauthorizes " # limitations
+        "SELECT access_group, child_group, parents_group, member, "# user_groups
+        "until, spots, via, depletes, dos, deauthorizes "# limitations
         "FROM limitations LEFT JOIN user_groups "
         "ON limitations.users_group=user_groups.child_group "
         "WHERE active=1 AND ")
     access_info = collections.namedtuple("AccessInfo", (
-        "access_group", "child_group", "parent_group", "member", "until",
+        "access_group", "child_group", "parents_group", "member", "until",
         "spots", "depletes", "dos", "deauthorizes", "depletion_bound",
         "implied_groups"))
 
@@ -428,15 +428,15 @@ class AccessRoot(AccessRouter):
                 if users_group is None
                     db.close()
                     flask.abort(401)
-                parent_group = isdescendant(db, user, users_group[0])
-                while parent_group:
+                parents_group = isdescendant(db, user, users_group[0])
+                while parents_group:
                     access = db.queryone(
                         "SELECT deauthorizes FROM limitations "
-                        "WHERE users_group=?", (parent_group,))
+                        "WHERE users_group=?", (parents_group,))
                     if access is not None and access[0] == 1:
                         break
-                    parent_group = isdescendant(db, user, parent_group)
-                if not parent_group:
+                    parents_group = isdescendant(db, user, parents_group)
+                if not parents_group:
                     db.close()
                     flask.abort(401)
         db.executemany(

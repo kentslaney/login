@@ -163,8 +163,8 @@ class ServerBP(Handshake, ServerRouter):
         if since is None:
             flask.abort(400)
         return json.dumps(self.db.queryall(
-            "SELECT rowid, revoked_time, access, refresh_time FROM revoked "
-            "WHERE revoked_time>?", (since,)))
+            "SELECT rowid, revoked_time, access_token, refresh_time "
+            "FROM revoked WHERE revoked_time>?", (since,)))
 
     async def send_deauthorize(self, revoked_time, access, refresh_time):
         async with websockets.connect(self.uri) as websocket:
@@ -188,7 +188,7 @@ class ServerWS(Handshake):
         cached = self.cache and self.cache.get(auth)
         if cached is None:
             timing = db.queryone(
-                "SELECT access, authtime, refresh_time FROM active WHERE "
+                "SELECT access_token, authtime, refresh_time FROM active WHERE "
                 "refresh=?", (auth,))
             if timing is None:
                 return json.dumps([None, None])
@@ -280,12 +280,12 @@ class ClientWS(Handshake):
     def revoke(self, info):
         # TODO: cache sync
         self.db.executemany(
-            "INSERT INTO ignore(ref, revoked_time, access, refresh_time) "
+            "INSERT INTO ignore(ref, revoked_time, access_token, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
 
     def refresh_access(self, refresh, access, refresh_time):
         self.db.execute(
-            "UPDATE active SET access=?, refresh_time=? WHERE refresh=?",
+            "UPDATE active SET access_token=?, refresh_time=? WHERE refresh=?",
             (access, refresh_time, refresh))
 
     async def listen(self):
