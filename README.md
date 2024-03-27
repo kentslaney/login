@@ -167,13 +167,11 @@ echo "$(grep TODO -r src && grep "^#\+ TODO" README.md -A `wc -l README.md | sed
 ```
 
 ## TODOs
-- so much QA (and almost certainly debugging)
-- switch out sql keywords access and depth
-- throughout: various TODOs in src comments
+- switch out sql keyword depth
 - pub/sub deauthenticated tokens for forwarded ports
-- \[should be able to expose desktop ML work starting here]
-- invite links (and QR codes, with a /qr link to switch devices after login)
+- invite link QR codes, with a /qr link to switch devices after login
 - better HTML interfaces/more informative errors/request access pages
+- use ajax requests for HTML interface
 - linked accounts
 - purge access tokens from remote clients after they're stale
 - custom login BP (for the sake of public MVPs) (and data privacy geeks)
@@ -189,6 +187,6 @@ https://github.com/python-social-auth/social-core/blob/master/social_core/backen
     - will that obscure the reason to use this repo?
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - type hints would be helpful
-- check indicies
+- check SQL indicies
 - ...unit tests (ideally higher up but realistically here)
 

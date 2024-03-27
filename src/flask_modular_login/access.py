@@ -37,10 +37,10 @@ def ismember(db, user, group): # group can be a root last stack
             else:
                 return (superset, permission[0])
 
-def descendants(db, user):
+def descendants(db, queries):
     results = []
-    children = db.queryall(
-        "SELECT child_group FROM user_groups WHERE member=?", (user,), True)
+    children = queries if type(queries) not is str else db.queryall(
+        "SELECT child_group FROM user_groups WHERE member=?", (queries,), True)
     while children:
         children = db.queryall(
             "SELECT parent_group, child_group, member, access_group " +
@@ -144,6 +144,10 @@ class AccessRoot(AccessRouter):
         return flask.session["user"]
 
     @AccessRouter.route("/accept/<invite>")
+    def confirm(self):
+        ...
+
+    @AccessRouter.route("/add/<invite>")
     def accept(self, invite, db=None, implied=False):
         user = self.authorize()
         db = db or self.db().begin()
@@ -176,7 +180,7 @@ class AccessRoot(AccessRouter):
         while child is not None:
             parent = db.queryone(
                 "SELECT member, parent_group FROM user_groups "
-                "WHERE child_group=?", (info.child,))
+                "WHERE child_group=?", (child,))
             if parent is None:
                 break
             if parent[0] == user:
@@ -222,15 +226,17 @@ class AccessRoot(AccessRouter):
         db.commit().close()
         return flask.redirect(info.redirect)
 
+    # selecting columns needed to know what invites selected can create
     group_query=(
-        "SELECT user_groups.access_group, user_groups.child_group, "
-        "user_groups.parent_group, until, spots, via, depletes, dos "
+        "SELECT access_group, child_group, parent_group, member, " # user_groups
+        "until, spots, via, depletes, dos, deauthorizes " # limitations
         "FROM limitations LEFT JOIN user_groups "
         "ON limitations.users_group=user_groups.child_group "
         "WHERE active=1 AND ")
-    info_keys = (
-        "access_group", "child_group", "parent_group", "until", "spots",
-        "depletes", "dos", "depletion_bound", "subgroups")
+    access_info = collections.namedtuple("AccessInfo", (
+        "access_group", "child_group", "parent_group", "member", "until",
+        "spots", "depletes", "dos", "deauthorizes", "depletion_bound",
+        "implied_groups"))
 
     @staticmethod
     def depletion_bound(count, parent, depletes, db):
@@ -250,11 +256,12 @@ class AccessRoot(AccessRouter):
         db, close = db or self.db().begin(), db is None
         results, info = [], db.queryall(
             self.group_query + "user_groups.member=?", (user,), True)
+        access_names = {} if len(info) == 0 else dict(db.queryall(
+            "SELECT uuid, group_name FROM access_groups WHERE uuid IN (" +
+            ", ".join(("?",) * len(info)) + ")",
+            [option.access_group for option in info]))
         for option in info:
-            access_name = db.queryone(
-                "SELECT group_name FROM access_groups WHERE uuid=?",
-                (option.access_group,))
-            access = [[option.access_group, access_name]]
+            access = [[option.access_group, access_names[option.access_group]]]
             subgroups = access
             while access:
                 children = []
@@ -268,29 +275,30 @@ class AccessRoot(AccessRouter):
                 option.spots, option.via, option.depletes, db), subgroups)
         if close:
             db.close()
-        return [dict(zip(self.info_keys, option)) for option in info]
+        return [self.access_info(*option) for option in results]
 
-    def group_access(self, group, user=None, db=None):
-        user = user or flask.session["user"]
+    def group_access(self, groups, db=None):
         db, close = db or self.db().begin(), db is None
-        group_name = db.queryone(
-            "SELECT group_name FROM access_group WHERE uuid=?", (group,))
-        if group_name is None:
+        group_names = db.queryall(
+            "SELECT uuid, group_name FROM access_group WHERE uuid IN (" +
+            ", ".join(("?",) * len(groups)) + ")", groups)
+        if len(group_name) != len(groups):
             db.close()
             flask.abort(400)
-        stack = access_stack(db, (group, group_name[0]), ("group_name",))
-        query = ", ".join(("?",) * len(stack))
+        stack = {}
+        for group in group_names:
+            stack[group[0]] = access_stack(db, group, ("group_name",)))
+        uniq = set(sum(list(zip(*stack.values()))[0], []))
         info = db.queryall(
             self.group_query + "user_groups.access_group IN (" + ", ".join(
-                ("?",) * len(stack)) + ")", stack, True)
-        for option in info:
-            option.append(self.depletion_bound(
-                option.spots, option.via, option.depletes, db))
-            option.append(list(reversed(
-                stack[:stack.index(option.access_group) + 1])))
+                ("?",) * len(uniq)) + ")", tuple(uniq), True)
+        results = [self.access_info(
+            *option, self.depletion_bound(
+                option.spots, option.via, option.depletes, db),
+            stack[option.access_group]) for option in info]
         if close:
             db.close()
-        return info
+        return results
 
     @AccessRouter.route("/invite")
     @AccessRouter.route("/invite/<group>")
@@ -385,61 +393,108 @@ class AccessRoot(AccessRouter):
             finally:
                 db.close()
 
-    removal_args = {
+    removal_args = [{
             "invitation": str,
             "member": str,
-        }
+        }]
 
-    @AccessRouter.route("/remove", methods=["POST"])
-    def remove(self):
+    @AccessRouter.route("/revoke", methods=["POST"])
+    def revoke(self):
         user = self.authorize()
         payload = json_payload(flask.request.body, self.removal_args)
         db = self.db().begin()
-        access_group = db.queryone(
-            "SELECT access_group FROM invitations WHERE uuid=?",
-            (payload.invitation,))
-        if access_group is None:
-            flask.abort(400)
-        privledges = db.queryone(
-            "SELECT MAX(SELECT deauthorizes FROM limitations " +
-            "LEFT JOIN user_groups " +
-            "ON limitations.users_group=user_groups.child_group " +
-            "WHERE user_groups.member=? AND user_groups.access_group IN (" +
-            ", ".join(("?",) * len(stack)) +
-            "))", [user] + access_stack(db, access_group[0]))
-        if privledges is None or privledges[0] == 0:
-            db.close()
-            flask.abort(401)
-        if privledges[1] == 1:
-            users_group = db.queryone(
-                "SELECT users_group FROM limitations WHERE member=? AND via=?",
-                (payload.member, payload.invitation))
-            if users_group is None
+        access_groups = dict(db.queryall(
+            "SELECT uuid, access_group FROM invitations WHERE uuid IN (" +
+            ", ".join(("?",) * len(payload)) + ")",
+            [revoking.invitation for revoking in payload]))
+        for revoking in payload:
+            access_group = access_groups.get(revoking.invitation)
+            if access_group is None:
+                flask.abort(400)
+            stack = access_stack(db, access_group[0])
+            privledges = db.queryone(
+                "SELECT MAX(SELECT deauthorizes FROM limitations " +
+                "LEFT JOIN user_groups " +
+                "ON limitations.users_group=user_groups.child_group " +
+                "WHERE user_groups.member=? AND user_groups.access_group IN (" +
+                ", ".join(("?",) * len(stack)) + "))", stack)
+            if privledges is None or privledges[0] == 0:
                 db.close()
                 flask.abort(401)
-            parent_group = isdescendant(db, user, users_group[0])
-            while parent_group:
-                access = db.queryone(
-                    "SELECT deauthorizes FROM limitations WHERE users_group=?",
-                    (parent_group,))
-                if access is not None and access[0] == 1:
-                    break
-                parent_group = isdescendant(db, user, parent_group)
-            if not parent_group:
-                db.close()
-                flask.abort(401)
-        db.execute(
+            if privledges[1] == 1:
+                users_group = db.queryone(
+                    "SELECT users_group FROM limitations WHERE member=? AND "
+                    "via=?", (revoking.member, revoking.invitation))
+                if users_group is None
+                    db.close()
+                    flask.abort(401)
+                parent_group = isdescendant(db, user, users_group[0])
+                while parent_group:
+                    access = db.queryone(
+                        "SELECT deauthorizes FROM limitations "
+                        "WHERE users_group=?", (parent_group,))
+                    if access is not None and access[0] == 1:
+                        break
+                    parent_group = isdescendant(db, user, parent_group)
+                if not parent_group:
+                    db.close()
+                    flask.abort(401)
+        db.executemany(
             "UPDATE limitations SET active=0 FROM user_groups "
             "WHERE users_group=child_group AND via=? AND member=?",
-            (payload.invitation, payload.member))
+            [(revoking.invitation, revoking.member) for revoking in payload])
         db.execute().close()
 
-    def deauthable(self, user):
+    deauth_info = collections.namedtuple("Deauthable", (
+        "member", "invite", "access_group", "group_name"))
+
+    # returns member, access_group, group_name, invite
+    def deauthable(self, user, db=None):
+        db = db or self.db().begin()
+        groups = self.user_groups(user, db)
+        permissions = [[], [], []]
+        for group in groups:
+            permissions[group.deauthorizes].append(group)
+        # permissions[1] access_group, group_name (descendants all in implied)
+        # member, access_group, child_group
+        childrens_groups = descendants(db, [
+            group.child_group for group in permissions[1]])
+        # users_group, invite
+        childrens_invites = [] if len(childrens_groups) == 0 else db.queryall(
+            "SELECT users_group, via FROM limitations WHERE active=1 AND "
+            "users_group IN (" + ", ".join(("?",) * len(childrens_groups)) +
+            ")", [group.child_group for group in childrens_groups], True)
+        # permissions[2] access_group, group_name
+        implied = set() if len(permissions[2]) == 0 else set(sum((
+            list(zip(*group["implied_groups"]))[0] # group uuids not names
+            for group in permissions[2]), []))
+        # member, invite, access_group
+        subgroupers = [] if len(implied) == 0 else db.queryall(
+            "SELECT member, via, access_group FROM user_groups LEFT JOIN "
+            "limitations ON user_groups.child_group=limitations.users_group "
+            "WHERE access_group IN (" + ", ".join(("?",) * len(implied)) + ")",
+            list(implied))
+        # python joins because of recursive queries
+        childrens_invites = dict(childrens_invites)
+        child_names = [(
+            group.member, childrens_invites[group.child_group],
+            group.access_group) for group in childrens_groups]
+        match = [dict(share.implied_groups) for share in permissions[1:]]
+        results = [[self.deauth_info(
+            share.member, share.via, share.access_group,
+            share.implied_groups[0][1]) for share in permissions[0]]]
+        for group_names, user_groups in zip(match, (child_names, subgroupers)):
+            results.append(self.deauth_info(
+                *share, group_names[share[2]]) for share in user_groups)
+        return results
+
+    @AccessRouter.route("/remove")
+    def remove(self):
         ...
 
     # TODO: create invitation page
     # TODO: confirm acceptence page (for implies == -1)
-    # TODO: deauthorization page and options display
+    # TODO: deauthorization page
     # TODO: module interface based access
 
 class AccessGroup:
