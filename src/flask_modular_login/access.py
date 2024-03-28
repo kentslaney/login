@@ -49,7 +49,7 @@ def ismember(db, user, group):
 # queries is either a str reprsenting a user UUID or a list of `users_group`s
 def descendants(db, queries):
     results = []
-    children = queries if type(queries) not is str else db.queryall(
+    children = queries if type(queries) is not str else db.queryall(
         "SELECT child_group FROM user_groups WHERE member=?", (queries,), True)
     while children:
         children = db.queryall(
@@ -97,6 +97,8 @@ def json_payload(self, value, template):
                 for option in (i for i in values if type(i) == has):
                     try:
                         return ensure(payload, option, qualname)
+                    except:
+                        pass
             elif has in types or payload in values:
                 return payload
             raise Exception("invalid enum")
@@ -314,12 +316,12 @@ class AccessRoot(AccessRouter):
         group_names = db.queryall(
             "SELECT uuid, group_name FROM access_group WHERE uuid IN (" +
             ", ".join(("?",) * len(groups)) + ")", groups)
-        if len(group_name) != len(groups):
+        if len(group_names) != len(groups):
             db.close()
             flask.abort(400)
         stack = {}
         for group in group_names:
-            stack[group[0]] = access_stack(db, group, ("group_name",)))
+            stack[group[0]] = access_stack(db, group, ("group_name",))
         uniq = set(sum([i[0] for i in stack.values()], []))
         info = db.queryall(
             self.group_query + "user_groups.access_group IN (" + ", ".join(
@@ -405,7 +407,7 @@ class AccessRoot(AccessRouter):
                     0 == invite.dos or
                     limits.dos is None and invite.dos >= limits.dos):
                 db.close()
-               flask.abort(flask.Response(
+                flask.abort(flask.Response(
                    "invalid degrees of separation", code=400))
             # invite deauthorizes <= limitations.deauthorizes
             if invite.deauthorizes > limits.deauthorizes:
@@ -472,7 +474,7 @@ class AccessRoot(AccessRouter):
                         "WHERE users_group=?", (child,))
                     if access is not None and access[0] == 1:
                         break
-                    child, parent = isdescendant(db, user, parents_group)
+                    child, parent = isdescendant(db, user, parent)
                 if not child:
                     db.close()
                     flask.abort(401)
