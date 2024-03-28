@@ -176,7 +176,7 @@ class AccessRoot(AccessRouter):
         return flask.session["user"]
 
     @AccessRouter.route("/accept/<invite>")
-    def confirm(self):
+    def confirm(self, invite):
         ...
 
     @AccessRouter.route("/add/<invite>")
@@ -311,6 +311,7 @@ class AccessRoot(AccessRouter):
         return [self.access_info(*option) for option in results]
 
     # returns all members of a given list of groups
+    # shouldn't necessarily be viewable
     def group_access(self, groups, db=None):
         db, close = db or self.db().begin(), db is None
         group_names = db.queryall(
