@@ -5,7 +5,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from store import FKDatabase, relpath, project_path
-from login import methods, authorized, DBStore
+from login import methods, authorized, DBStore, safe_redirect
 from access import AccessRoot
 
 end_locals()
@@ -35,14 +35,16 @@ class OAuthBlueprint(flask.Blueprint):
             name: {"id": "", "secret": ""} for name in methods.keys()}
 
     def login(self):
+        url = flask.request.args.get("next")
+        if url is not None and not safe_redirect(url):
+            flask.abort(400)
         if not authorized(): # only accessed in auth app's context
-            url = {"next": flask.request.args["next"]} \
-                if "next" in flask.request.args else {}
+            url = {} if url is None else {"next": url}
             debug = all(i.debug for i in self._oauth_apps)
             return flask.render_template("login.html", debug=debug, **{
                 name: flask.url_for(method.name + ".login", **url)
                 for name, method in self._oauth_blueprints.items()})
-        return flask.redirect("/")
+        return flask.redirect("/" if url is None else url)
 
     def _oauth_deauthorize(self, token, method):
         self._oauth_stores[method].deauthorize(token)

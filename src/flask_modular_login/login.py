@@ -11,6 +11,17 @@ from platforms import methods, userlookup
 
 end_locals()
 
+def safe_redirect(url, app=None):
+    app = flask.current_app if app is None else app
+    checking = urllib.parse.urlparse(url)
+    # fallback could be app.config['SERVER_NAME'] but if multiple subdomains
+    # point endpoints to the same flask app (same API token, different logins)
+    # then the url redirect should be within the same host
+    trusted = app.config['SESSION_COOKIE_DOMAIN'] or flask.request.host
+    checking = checking.removesuffix(":443")
+    return checking.scheme in ("", "https", "wss") and (
+        not checking or checking.endswith(trusted))
+
 def get_next():
     try:
         return json.loads(flask.session.get("next", "{}"))
@@ -24,7 +35,10 @@ def store_next(stored):
 def before_login(blueprint, url):
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url)[4])["state"][0]
     stored = get_next()
-    stored[state] = flask.request.args.get("next", "/")
+    current_redirect = flask.request.args.get("next", "/")
+    if not safe_redirect(current_redirect):
+        flask.abort(400)
+    stored[state] = current_redirect
     store_next(stored)
 
 @oauth_authorized.connect

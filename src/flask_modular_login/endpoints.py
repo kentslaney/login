@@ -15,7 +15,9 @@ class LoginBlueprint(OAuthBlueprint):
         self.route("/logout")(self._oauth_logout)
         self.route("/deauthorize/<refresh>", methods=["POST"])(
             self._oauth_kick)
-        self.route("/sessions")(self._oauth_sessions)
+        self.route("/sessions")(lambda: json.dumps(self._oauth_sessions))
+        self.route("/view/sessions")(lambda: flask.render_template(
+            "sessions.html", **self._oauth_sessions)
 
     def _oauth_logout(self):
         if "method" in flask.session:
@@ -45,5 +47,5 @@ class LoginBlueprint(OAuthBlueprint):
             sess["authtime"] = datetime.datetime.fromtimestamp(
                 sess["authtime"]).strftime("%m/%d/%Y %H:%M:%S UTC")
             sess["current"] = sess["token"] == flask.session["refresh"]
-        return flask.render_template("sessions.html", active=active)
+        return {"active": active}
 
