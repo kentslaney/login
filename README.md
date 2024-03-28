@@ -163,10 +163,13 @@ integration. To change which are supported, modify the interface connected in
 `methods` dictionary.
 
 ```bash
-echo "$(grep TODO -r src && grep "^#\+ TODO" README.md -A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
+echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
+-A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
 ```
 
 ## TODOs
+- it'd be nice to make the invite limitations separated and composable
+- consistent indentation between if statements and others
 - pub/sub deauthenticated tokens for forwarded ports
 - invite link QR codes, with a /qr link to switch devices after login
 - better HTML interfaces/more informative errors/request access pages

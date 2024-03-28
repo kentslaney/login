@@ -8,21 +8,29 @@ from store import RouteLobby
 
 end_locals()
 
+# returns stack of access groups going upwards from init
+# if extra is non empty, it also queries those columns
+# if querying extra, expects init to be a tuple with those columns after
+# if extra is empty, init can also be a string
+# if init is a string, the output is flattened
+# the last element will have None as the UUID
 def access_stack(db, init, extra=()):
-    stack, parent = [], (init,) if isinstance(init, str) else init
+    parent = (init,) if isinstance(init, str) else init
     assert len(extra) + 1 == len(parent)
-    query = "".join(", " + i for i in extra)
-    while parent is not None:
-        stack.append(parent)
+    stack, query = [parent], "".join(", " + i for i in extra)
+    while parent[0] is not None:
         parent = db.queryone(
             f"SELECT parent_group{query} FROM access_groups WHERE uuid=?",
             (stack[-1][0],))
-    return list(zip(*stack)) if isinstance(init, str) else stack
+        stack.append(parent)
+    return sum(stack, ()) if isinstance(init, str) else stack
 
-def ismember(db, user, group): # group can be a root last stack
+# group can be a root last stack
+# calls db.commit
+def ismember(db, user, group):
     stack = access_stack(db, group) if isinstance(group, str) else group
     for superset in reversed(stack):
-        permission = db.queryone(
+        permission = None if superset is None else db.queryone(
             "SELECT limitations.users_group, limitations.until "
             "FROM user_groups LEFT JOIN limitations "
             "ON user_groups.child_group=limitations.users_group "
@@ -30,6 +38,7 @@ def ismember(db, user, group): # group can be a root last stack
             "limitations.active=1", (user, superset))
         if permission is not None:
             if permission[1] is not None and permission[1] < time.time():
+                # deactivate if it's past access expiration
                 db.execute(
                     "UPDATE limitations SET active=0 WHERE users_group=?",
                     (permission[0],))
@@ -37,6 +46,7 @@ def ismember(db, user, group): # group can be a root last stack
             else:
                 return (superset, permission[0])
 
+# queries is either a str reprsenting a user UUID or a list of `users_group`s
 def descendants(db, queries):
     results = []
     children = queries if type(queries) not is str else db.queryall(
@@ -50,6 +60,8 @@ def descendants(db, queries):
         results += children
     return results
 
+# checks if a group descends from user, returns None if not
+# otherwise, returns the child and parent group of the user_group for user
 def isdescendant(db, user, parents_group):
     while parents_group:
         parent = db.queryone(
@@ -58,9 +70,16 @@ def isdescendant(db, user, parents_group):
         if parent is None:
             return None
         if parent.member == user:
-            return parents_group
+            return parents_group, parent.parents_group
         parents_group = parent.parents_group
 
+# ensures that json value matches template given
+# templates with one list element can be an arbitrary length
+# templates with multiple list elements must have the elements match
+# dictionaries are turned into `namedtuple`s sorted alphabetically
+# templates with sets are considered enums, and value must be in that set
+# other than a nested set, sets can contain all the other kinds of templates
+# otherwise, the type of the value must match the type given in template
 def json_payload(self, value, template):
     def oxford_comma(terms):
         return " and ".join(terms) if len(terms) < 3 else \
@@ -68,23 +87,31 @@ def json_payload(self, value, template):
 
     def ensure(payload, template, qualname=""):
         part_name = f"payload" + (qualname or "_part_" + {qualname[1:]})
-        requires = payload if type(payload) == type else type(template)
+        requires = template if type(template) == type else type(template)
         if requires == set:
-            if payload not in template:
-                flask.abort(flask.Response("invalid enum", code=400))
-            return payload
+            assert len(template) > 0
+            flag, has = type('flag', (), {})(), type(payload)
+            it = ((flag, i) if type(i) == type else (i, flag) for i in template)
+            types, values = map(lambda x: set(x).difference({flag}), zip(*it))
+            if has in map(type, values).intersection({dict, list}):
+                for option in (i for i in values if type(i) == has):
+                    try:
+                        return ensure(payload, option, qualname)
+            elif has in types or payload in values:
+                return payload
+            raise Exception("invalid enum")
         if not isinstance(template, requires):
-            flask.abort(flask.Response(
-                f"payload should be {requires}", code=400))
+            raise Exception(f"payload should be {requires}")
         if requires == dict:
             if template.keys() != payload.keys():
                 given, needed = set(payload.keys()), set(template.keys())
                 missing = oxford_comma(needed.difference(given))
                 extra = oxford_comma(given.difference(needed))
+                # one value can not be both missing and extra
                 xor = {missing: "is missing ", extra: "should not contain "}
                 message = part_name + " " + " and ".join(
                     v + k for k, v in xor if k)
-                flask.abort(flask.Response(message, code=400))
+                raise Exception(message)
             ordered_names = tuple(sorted(template.keys()))
             obj = collections.namedtuple(part_name, ordered_names)
             return obj(**{
@@ -102,7 +129,10 @@ def json_payload(self, value, template):
         payload = json.loads(value)
     except json.decoder.JSONDecodeError:
         flask.abort(flask.Response("invalid JSON", code=400))
-    return ensure(payload, template)
+    try:
+        return ensure(payload, template)
+    except Exception as e:
+        flask.abort(flask.Response(e.args[0], code=400))
 
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 
@@ -187,26 +217,25 @@ class AccessRoot(AccessRouter):
                 db.close()
                 flask.abort(412)
             child = parent[1]
-        # lower depletions
-        if info.invitees is not None:
-            lower, count, parent = invite, info.invitees, info.depletes
-            while count is not None:
-                if count == 0:
-                    # none left, don't execute depletions
-                    db.close()
-                    flask.abort(404)
-                else:
-                    db.execute(
-                        "UPDATE invitations SET invitees=? WHERE uuid=?",
-                        (count - 1, lower))
-                if parent is None:
-                    break
-                else:
-                    lower = parent
-                    # FK implies unpackable
-                    count, parent = db.queryone(
-                        "SELECT invitees, depletes FROM invitations "
-                        "WHERE uuid=?", (parent,))
+        # lower depletions; invites' invitees is not None if depletes
+        lower, count, parent = invite, info.invitees, info.depletes
+        while count is not None:
+            if count == 0:
+                # none left, don't execute depletions
+                db.close()
+                flask.abort(404)
+            else:
+                db.execute(
+                    "UPDATE invitations SET invitees=? WHERE uuid=?",
+                    (count - 1, lower))
+            if parent is None:
+                break
+            else:
+                lower = parent
+                # FK implies unpackable
+                count, parent = db.queryone(
+                    "SELECT invitees, depletes FROM invitations "
+                    "WHERE uuid=?", (parent,))
         child_group = str(uuid.uuid4())
         db.execute(
             "INSERT INTO user_groups(parents_group, child_group, member, "
@@ -216,6 +245,7 @@ class AccessRoot(AccessRouter):
         if until is not None and until < 0:
             until = min(now + until, info.access_limit)
         dos = info.dos and (info.dos - 1)
+        # depletes via
         db.execute(
             "INSERT INTO limitations(users_group, until, spots, via, "
             "depletes, dos, deauthorizes) VALUES (?, ?, ?, ?, ?, ?, ?)", (
@@ -244,6 +274,7 @@ class AccessRoot(AccessRouter):
             return count
         minimum = count
         while parent is not None:
+            # FK implies unpackable
             count, parent = db.queryone(
                 "SELECT invitees, depletes FROM invitations "
                 "WHERE uuid=?", (parent,))
@@ -251,6 +282,7 @@ class AccessRoot(AccessRouter):
                 minimum = count if minimum is None else min(count, minimum)
         return minimum
 
+    # returns access_info for all groups user is in
     def user_groups(self, user=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
@@ -264,12 +296,11 @@ class AccessRoot(AccessRouter):
             access = [[option.access_group, access_names[option.access_group]]]
             subgroups = access
             while access:
-                children = []
-                for parent, _ in access:
-                    children += db.queryall(
-                        "SELECT uuid, group_name FROM access_groups "
-                        "WHERE parent_group=?", (parent,))
-                access = children
+                access = db.queryall(
+                    "SELECT uuid, group_name FROM access_groups " +
+                    "WHERE parent_group IN (" +
+                    ", ".join(("?",) * len(access)) + ")",
+                    [i[0] for i in access])
                 subgroups += access
             results += option + (self.depletion_bound(
                 option.spots, option.via, option.depletes, db), subgroups)
@@ -277,6 +308,7 @@ class AccessRoot(AccessRouter):
             db.close()
         return [self.access_info(*option) for option in results]
 
+    # returns all members of a given list of groups
     def group_access(self, groups, db=None):
         db, close = db or self.db().begin(), db is None
         group_names = db.queryall(
@@ -288,7 +320,7 @@ class AccessRoot(AccessRouter):
         stack = {}
         for group in group_names:
             stack[group[0]] = access_stack(db, group, ("group_name",)))
-        uniq = set(sum(list(zip(*stack.values()))[0], []))
+        uniq = set(sum([i[0] for i in stack.values()], []))
         info = db.queryall(
             self.group_query + "user_groups.access_group IN (" + ", ".join(
                 ("?",) * len(uniq)) + ")", tuple(uniq), True)
@@ -310,13 +342,13 @@ class AccessRoot(AccessRouter):
         "confirm": bool,
         "invitations": [{
             "access_group": str,
-            "acceptance_expiration": int,
-            "access_expiration": int,
-            "invitees": int,
-            "plus": int,
+            "acceptance_expiration": {None, int},
+            "access_expiration": {None, int},
+            "invitees": {None, int},
+            "plus": {None, int},
             "via": str,
             "depletes": bool,
-            "dos": int,
+            "dos": {None, int},
             "deauthorizes": {0, 1, 2},
         }]}
 
@@ -332,10 +364,11 @@ class AccessRoot(AccessRouter):
             db.close()
             flask.abort(flask.Response("bad redirect", code=400))
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
-        current_uuid, next_uuid = uuid.uuid4(), None
+        initial_uuid = current_uuid = uuid.uuid4()
+        next_uuid = None
         for invite, last in reversed(zip(payload.invitations, first)):
             # user accepted via
-            # via has access to group (limitations.active = 1)
+            # user has access to group through via (limitations.active = 1)
             limits = db.queryone(
                 "SELECT until, spots, depletes, dos, deauthorizes "
                 "FROM limitations LEFT JOIN user_groups "
@@ -348,21 +381,29 @@ class AccessRoot(AccessRouter):
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
             #     (limited by access_limit)
-            if invite.acceptance_expiration > limits.until or \
-                    invite.access_expiration > limits.until:
+            if limits.until is not None and (
+                    invite.acceptance_expiration is None or
+                    invite.acceptance_expiration > limits.until or
+                    invite.access_expiration is None or
+                    invite.access_expiration > limits.until):
                 db.close()
                 flask.abort(flask.Response("invalid timing", code=400))
             # invitees is less than or equal to depletion bound
-            if invite.invitees > self.depletion_bound(
-                    limits.spots, invite.via, limits.depletes, db):
+            bound = self.depletion_bound(
+                limits.spots, invite.via, limits.depletes, db)
+            if bound is not None and (
+                    invite.invitees is None or invite.invitees > bound):
                 db.close()
                 flask.abort(flask.Response("too many invitees", code=400))
             # plus < spots
-            if invite.plus >= limits.spots:
+            if limits.spots is not None and (
+                    invite.plus is None or invite.plus >= limits.spots):
                 db.close()
                 flask.abort(flask.Response("too many plus ones", code=400))
             # 0 < dos < limits.dos
-            if not 0 < invite.dos < limits.dos:
+            if limits.dos is not None if invite.dos is None else (
+                    0 == invite.dos or
+                    limits.dos is None and invite.dos >= limits.dos):
                 db.close()
                flask.abort(flask.Response(
                    "invalid degrees of separation", code=400))
@@ -371,27 +412,23 @@ class AccessRoot(AccessRouter):
                 db.close()
                 flask.abort(flask.Response("can't deauthorize", code=401))
             # depletes <= limits.depletes
-            if invite.depletes is None and limits.deplets is not None:
+            if invite.depletes and not limits.depletes:
                 db.close()
                 flask.abort(flask.Response("must deplete", code=401))
-            redirect = next_uuid and payload.redirect
+            redirect = payload.redirect if last else None
+            implied = (-1 if payload.confirm else 0) if next_uuid is None else 1
             current_uuid, next_uuid = uuid.uuid4(), current_uuid
-            implied = (-1 if payload.confirm else 0) if last else 1
             values.append(invite.limits + (
-                limits.until, implied, redirect, current_uuid, next_uuid))
-        try:
+                limits.until, implied, redirect, current_uuid,
+                None if last else next_uuid))
             db.executemany(
                 "INSERT INTO invitations(" +
                 ", ".join(payload.invitations[0]._fields) +
                 ", access_limit, implied, redirect, uuid, implies) VALUES (" +
                 ", ".join(("?",) * (len(payload.invitations[0]) + 5)) +
                 ")", values)
+            db.commit().close()
             return current_uuid
-        finally:
-            try:
-                db.commit()
-            finally:
-                db.close()
 
     removal_args = [{
             "invitation": str,
@@ -411,13 +448,13 @@ class AccessRoot(AccessRouter):
             access_group = access_groups.get(revoking.invitation)
             if access_group is None:
                 flask.abort(400)
-            stack = access_stack(db, access_group[0])
+            stack = filter(None, access_stack(db, access_group[0]))
             privledges = db.queryone(
-                "SELECT MAX(SELECT deauthorizes FROM limitations " +
+                "SELECT MAX(deauthorizes) FROM limitations " +
                 "LEFT JOIN user_groups " +
                 "ON limitations.users_group=user_groups.child_group " +
                 "WHERE user_groups.member=? AND user_groups.access_group IN (" +
-                ", ".join(("?",) * len(stack)) + "))", stack)
+                ", ".join(("?",) * len(stack)) + ")", [user] + stack)
             if privledges is None or privledges[0] == 0:
                 db.close()
                 flask.abort(401)
@@ -425,18 +462,18 @@ class AccessRoot(AccessRouter):
                 users_group = db.queryone(
                     "SELECT users_group FROM limitations WHERE member=? AND "
                     "via=?", (revoking.member, revoking.invitation))
-                if users_group is None
+                if users_group is None:
                     db.close()
                     flask.abort(401)
-                parents_group = isdescendant(db, user, users_group[0])
-                while parents_group:
+                child, parent = isdescendant(db, user, users_group[0])
+                while parent:
                     access = db.queryone(
                         "SELECT deauthorizes FROM limitations "
-                        "WHERE users_group=?", (parents_group,))
+                        "WHERE users_group=?", (child,))
                     if access is not None and access[0] == 1:
                         break
-                    parents_group = isdescendant(db, user, parents_group)
-                if not parents_group:
+                    child, parent = isdescendant(db, user, parents_group)
+                if not child:
                     db.close()
                     flask.abort(401)
         db.executemany(
@@ -465,9 +502,8 @@ class AccessRoot(AccessRouter):
             "users_group IN (" + ", ".join(("?",) * len(childrens_groups)) +
             ")", [group.child_group for group in childrens_groups], True)
         # permissions[2] access_group, group_name
-        implied = set() if len(permissions[2]) == 0 else set(sum((
-            list(zip(*group["implied_groups"]))[0] # group uuids not names
-            for group in permissions[2]), []))
+        implied = set() if len(permissions[2]) == 0 else set(
+            i[0] for group in permissions[2] for i in group["implied_groups"])
         # member, invite, access_group
         subgroupers = [] if len(implied) == 0 else db.queryall(
             "SELECT member, via, access_group FROM user_groups LEFT JOIN "
