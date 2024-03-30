@@ -19,7 +19,7 @@ case $1 in
     ;;
   debug)
     setup
-    cd "$BASE/src"
+    cd "$BASE/src/flask_modular_login"
     python -m flask --app server:app run --port 8000 --debug
     ;;
   start)
@@ -48,3 +48,4 @@ case $1 in
     echo "usage: server.sh [start | stop | help]"
     ;;
 esac
+

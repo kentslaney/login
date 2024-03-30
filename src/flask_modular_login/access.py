@@ -335,8 +335,11 @@ class AccessRoot(AccessRouter):
             db.close()
         return results
 
-    @AccessRouter.route("/invite")
     @AccessRouter.route("/invite/<group>")
+    def single_group_invite(self, group):
+        return self.invite(group)
+
+    @AccessRouter.route("/invite")
     def invite(self, group=None):
         ...
 

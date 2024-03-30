@@ -171,6 +171,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 - it'd be nice to make the invite limitations separated and composable
 - consistent indentation between if statements and others
 - pub/sub deauthenticated tokens for forwarded ports
+- pub/sub group access queries
 - invite link QR codes, with a /qr link to switch devices after login
 - better HTML interfaces/more informative errors/request access pages
 - use ajax requests for HTML interface
@@ -190,5 +191,6 @@ https://github.com/python-social-auth/social-core/blob/master/social_core/backen
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - type hints would be helpful
 - check SQL indicies
+- caching in various places
 - ...unit tests (ideally higher up but realistically here)
 

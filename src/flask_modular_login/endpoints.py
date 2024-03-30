@@ -1,4 +1,4 @@
-import datetime, flask, urllib.parse
+import datetime, flask, urllib.parse, functools
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -15,9 +15,8 @@ class LoginBlueprint(OAuthBlueprint):
         self.route("/logout")(self._oauth_logout)
         self.route("/deauthorize/<refresh>", methods=["POST"])(
             self._oauth_kick)
-        self.route("/sessions")(lambda: json.dumps(self._oauth_sessions))
-        self.route("/view/sessions")(lambda: flask.render_template(
-            "sessions.html", **self._oauth_sessions)
+        self.route("/sessions")(self._oauth_sessions_json)
+        self.route("/view/sessions")(self._oauth_sessions_template)
 
     def _oauth_logout(self):
         if "method" in flask.session:
@@ -48,4 +47,19 @@ class LoginBlueprint(OAuthBlueprint):
                 sess["authtime"]).strftime("%m/%d/%Y %H:%M:%S UTC")
             sess["current"] = sess["token"] == flask.session["refresh"]
         return {"active": active}
+
+def template_json(cls, template_path):
+    def decorator(f):
+        def json(*a, **kw):
+            return json.dumps(f(*a, **kw))
+        def template(*a, **kw):
+            return flask.render_template(template_path, **f(*a, **kw))
+        json.__name__ = f.__name__ + "_json"
+        template.__name__ = f.__name__ + "_template"
+        setattr(cls, json.__name__, json)
+        setattr(cls, template.__name__, template)
+        return f
+    return decorator
+
+template_json(LoginBlueprint, "sessions.html")(LoginBlueprint._oauth_sessions)
 
