@@ -1,7 +1,7 @@
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from utils import app, LoginCaller
+from builder import app, LoginCaller
 from endpoints import LoginBlueprint
 
 end_locals()
