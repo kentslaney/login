@@ -135,25 +135,24 @@ class Handshake:
         h.verify(data[8:0x28])
         return data[0x128:]
 
-class ServerRouter(RouteLobby):
-    pass
+server_lobby = RouteLobby()
 
-class ServerBP(Handshake, ServerRouter):
+class ServerBP(Handshake):
     def __init__(self, db, root_path=None):
         super().__init__(root_path)
         self.db = db
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
-        self.register_lobby(self.bp)
+        server_lobby.register_lobby(self.bp, self)
         self.keypair()
 
-    @ServerRouter.route("/syn", methods=["POST"])
+    @server_lobby.route("/syn", methods=["POST"])
     def syn(self):
         try:
             return self.sign(flask.request.data)
         except:
             flask.abort(401)
 
-    @ServerRouter.route("/updates", methods=["POST"])
+    @server_lobby.route("/updates", methods=["POST"])
     def updates(self):
         try:
             self.timer(flask.request.data)
@@ -258,7 +257,6 @@ class ClientWS(Handshake):
             "" if query is None else "?" + urllib.urlencode(query))
         self.public = self.load_public()
         self.key = type('fake_key', (), {"public_key": lambda: self.public})
-        self.register_lobby(self.bp)
 
     def load_public(self):
         if os.path.exists(self.root_path("public.pem")):

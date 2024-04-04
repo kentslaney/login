@@ -11,7 +11,7 @@ Add a `credentials.json` to the root directory of this project, in the form
 }
 ```
 In case the project doesn't have OAuth credentials or a public facing URL yet,
-starting the server in debug mode will add a "test" login option. 
+starting the server in debug mode will add a "test" login option.
 
 The only dependency not included is the memcached server. Once installed, start
 the caching service and server via
@@ -68,7 +68,6 @@ app.register_blueprint(bp) # login_required call could also be here
 if __name__ == "__main__":
     app.run(port=8080)
 ```
-
 Note that this project only works if the two project URLs share cookies. If the
 two projects aren't hosted on the same subdomain, the login redirect will 404,
 since the client project doesn't have access to the public facing setup for the
@@ -129,7 +128,7 @@ import flask
 from flask_modular_login import OAuthBlueprint, LoginBuilder, login_required
 
 app = flask.Flask(__name__)
-app.register_blueprint(OAuthBlueprint("path/to/credentials/dir"))
+app.register_blueprint(OAuthBlueprint(root_path="path/to/credentials/dir"))
 
 login_required.app = app
 # or
@@ -168,6 +167,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
+- rewrite README
 - it'd be nice to make the invite limitations separated and composable
 - consistent indentation between if statements and others
 - pub/sub deauthenticated tokens for forwarded ports

@@ -71,7 +71,7 @@ CREATE TABLE invitations (
 	PRIMARY KEY(uuid),
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
 	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
-	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
+	FOREIGN KEY(access_group) REFERENCES access_groups(uuid),
 	FOREIGN KEY(implies) REFERENCES invitations(uuid),
 	CHECK((implies IS NULL) <> (redirect IS NULL)),
 	CHECK(deauthorizes >= 0 AND deauthorizes <= 2),

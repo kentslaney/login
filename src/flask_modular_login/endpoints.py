@@ -5,19 +5,19 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from interface import OAuthBlueprint
 from login import authorized
+from store import RouteLobby
 
 end_locals()
+
+login_lobby = RouteLobby()
 
 # all endpoints can only be called with flask.current_app as the auth app
 class LoginBlueprint(OAuthBlueprint):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self.route("/logout")(self._oauth_logout)
-        self.route("/deauthorize/<refresh>", methods=["POST"])(
-            self._oauth_kick)
-        self.route("/sessions")(self._oauth_sessions_json)
-        self.route("/view/sessions")(self._oauth_sessions_template)
+        login_lobby.register_lobby(self, self)
 
+    @login_lobby.route("/logout")
     def _oauth_logout(self):
         if "method" in flask.session:
             self._oauth_deauthorize(
@@ -26,12 +26,14 @@ class LoginBlueprint(OAuthBlueprint):
         return flask.redirect(flask.request.args.get(
             "next", self.login_endpoint()))
 
+    @login_lobby.route("/deauthorize/<refresh>", methods=["POST"])
     def _oauth_kick(self, refresh):
         if not authorized():
             flask.abort(401)
         self._oauth_deauthorize(
             refresh, flask.session["method"], flask.session["user"])
 
+    @login_lobby.template_json("/sessions", "sessions.html")
     def _oauth_sessions(self):
         if not authorized():
             return flask.redirect(
@@ -47,19 +49,4 @@ class LoginBlueprint(OAuthBlueprint):
                 sess["authtime"]).strftime("%m/%d/%Y %H:%M:%S UTC")
             sess["current"] = sess["token"] == flask.session["refresh"]
         return {"active": active}
-
-def template_json(cls, template_path):
-    def decorator(f):
-        def json(*a, **kw):
-            return json.dumps(f(*a, **kw))
-        def template(*a, **kw):
-            return flask.render_template(template_path, **f(*a, **kw))
-        json.__name__ = f.__name__ + "_json"
-        template.__name__ = f.__name__ + "_template"
-        setattr(cls, json.__name__, json)
-        setattr(cls, template.__name__, template)
-        return f
-    return decorator
-
-template_json(LoginBlueprint, "sessions.html")(LoginBlueprint._oauth_sessions)
 

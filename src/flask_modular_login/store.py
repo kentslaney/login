@@ -1,4 +1,4 @@
-import os.path, functools
+import os.path, functools, collections
 
 def relpath(*args):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
@@ -51,9 +51,9 @@ class TransactionContext(Passthrough):
     def __getattribute__(self, name):
         res = super().__getattribute__(name)
         if name not in ("parent", "rewrite") and name not in self.rewrite:
-            member = getattr(self.parent.__class__, name, None)
+            member = getattr(self.parent, name, None)
             if callable(member):
-                return functools.partial(member, self)
+                return member
         return res
 
     def get(self):
@@ -86,7 +86,7 @@ class AppContext(Passthrough):
     def __getattribute__(self, name):
         res = super().__getattribute__(name)
         return self.wrapper(res) if \
-            name not in ("__class__", "parent", "rewrite") and \
+            name not in ("parent", "rewrite") and \
             name not in self.rewrite and callable(res) \
             else res
 
@@ -210,7 +210,7 @@ class HeadlessDB:
         assert words[0] == "select"
         assert words[1] not in ("distinct", "all")
         names = []
-        terms = iter(sum(filter(None, (
+        terms = iter(filter(None, sum((
             sum(([j, ","] for j in i.split(",")), [])[:-1]
             for i in words[1:]), [])))
         for word in terms:
@@ -285,23 +285,48 @@ class ThreadedMemcached(MemcachedCache):
 def threaded_client(app, config, args, kwargs):
     return ThreadedMemcached.factory(app, config, args, kwargs)
 
-class RouteLobby:
-    routes = None
+import json
 
-    @classmethod
-    def route(cls, *a, **kw):
+class RouteLobby:
+    def __init__(self):
+        self.routes = []
+
+    def route(self, *a, **kw):
         def wrapper(f):
-            if cls.routes is None:
-                cls.routes = []
-            cls.routes.append((a, kw, f))
+            self.routes.append((a, kw, f))
             return f
         return wrapper
 
-    def register_lobby(self, bp):
+    def register_lobby(self, bp, *fa, **fkw):
         for a, kw, f in self.routes:
             bp.route(*a, **kw)(
-                functools.wraps(f)(functools.partial(f, self)))
+                functools.wraps(f)(functools.partial(f, *fa, **fkw)))
 
+    def template_json(self, rule, template_path, prefix="/view", **routeargs):
+        def decorator(f):
+            def json_wrapper(*a, **kw):
+                res = f(*a, **kw)
+                if isinstance(res, flask.Response):
+                    # TODO: not really implied, sort of a work around
+                    if 300 <= res.status_code < 400:
+                        flask.abort(401)
+                    return res
+                return json.dumps(res)
+            def template(*a, **kw):
+                res = f(*a, **kw)
+                if isinstance(res, flask.Response):
+                    return res
+                return flask.render_template(template_path, **res)
+
+            json_wrapper.__name__ = f.__name__ + "_json"
+            template.__name__ = f.__name__ + "_template"
+
+            self.route(rule, **routeargs)(json_wrapper)
+            self.route(prefix + rule, **routeargs)(template)
+            return f
+        return decorator
+
+# TODO: cmon
 key_paths = (project_path("run"), project_path())
 def secret_key(paths = key_paths):
     for path in paths:

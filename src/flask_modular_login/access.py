@@ -31,11 +31,10 @@ def ismember(db, user, group):
     stack = access_stack(db, group) if isinstance(group, str) else group
     for superset in reversed(stack):
         permission = None if superset is None else db.queryone(
-            "SELECT limitations.users_group, limitations.until "
-            "FROM user_groups LEFT JOIN limitations "
-            "ON user_groups.child_group=limitations.users_group "
-            "WHERE user_groups.member=? AND user_groups.access_group=? AND "
-            "limitations.active=1", (user, superset))
+            "SELECT child_group, until FROM user_groups LEFT JOIN limitations "
+            "ON child_group=users_group WHERE member=? AND access_group=? AND "
+            "active=1 ORDER BY until DESC NULLS FIRST",
+            (user, superset))
         if permission is not None:
             if permission[1] is not None and permission[1] < time.time():
                 # deactivate if it's past access expiration
@@ -138,17 +137,16 @@ def json_payload(self, value, template):
 
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 
-class AccessRouter(RouteLobby):
-    pass
+access_lobby = RouteLobby()
 
-class AccessRoot(AccessRouter):
+class AccessRoot:
     def __init__(self, db, redirect):
         self.registered, self.groups = [], []
         self.redirect, self.db = redirect, db
         self.bp = flask.Blueprint(
             "modular_login_access", __name__, url_prefix="/access")
         self.bp.record(lambda setup_state: self.register(setup_state.app))
-        self.register_lobby(self.bp)
+        access_lobby.register_lobby(self.bp, self)
 
     def register(self, app):
         self.registered.append(app)
@@ -166,20 +164,15 @@ class AccessRoot(AccessRouter):
             group.register(app)
 
     def authorize(self):
-        # repeated from LoginBuilder
         if not authorized():
-            if flask.request.method == "GET":
-                return flask.redirect(
-                    self.redirect() + "?" + urllib.parse.urlencode(
-                        {"next": flask.request.url}))
             flask.abort(401)
         return flask.session["user"]
 
-    @AccessRouter.route("/accept/<invite>")
+    @access_lobby.route("/accept/<invite>")
     def confirm(self, invite):
-        ...
+        return flask.render_template("confirm.html", invite=invite)
 
-    @AccessRouter.route("/add/<invite>")
+    @access_lobby.route("/add/<invite>")
     def accept(self, invite, db=None, implied=False):
         user = self.authorize()
         db = db or self.db().begin()
@@ -262,12 +255,11 @@ class AccessRoot(AccessRouter):
     group_query=(
         "SELECT access_group, child_group, parents_group, member, "# user_groups
         "until, spots, via, depletes, dos, deauthorizes "# limitations
-        "FROM limitations LEFT JOIN user_groups "
-        "ON limitations.users_group=user_groups.child_group "
+        "FROM limitations LEFT JOIN user_groups ON users_group=child_group "
         "WHERE active=1 AND ")
     access_info = collections.namedtuple("AccessInfo", (
         "access_group", "child_group", "parents_group", "member", "until",
-        "spots", "depletes", "dos", "deauthorizes", "depletion_bound",
+        "spots", "via", "depletes", "dos", "deauthorizes", "depletion_bound",
         "implied_groups"))
 
     @staticmethod
@@ -285,15 +277,22 @@ class AccessRoot(AccessRouter):
         return minimum
 
     # returns access_info for all groups user is in
-    def user_groups(self, user=None, db=None):
+    def user_groups(self, user=None, groups=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
-        results, info = [], db.queryall(
-            self.group_query + "user_groups.member=?", (user,), True)
+        if groups is None:
+            info = db.queryall(
+                self.group_query + "user_groups.member=?", (user,), True)
+        else:
+            info = db.queryall(
+                self.group_query + "user_groups.member=? AND "
+                "user_groups.access_group IN (" + ", ".join(
+                    ("?",) * len(groups)) + ")", (user,) + tuple(groups), True)
         access_names = {} if len(info) == 0 else dict(db.queryall(
             "SELECT uuid, group_name FROM access_groups WHERE uuid IN (" +
             ", ".join(("?",) * len(info)) + ")",
             [option.access_group for option in info]))
+        results = []
         for option in info:
             access = [[option.access_group, access_names[option.access_group]]]
             subgroups = access
@@ -304,8 +303,8 @@ class AccessRoot(AccessRouter):
                     ", ".join(("?",) * len(access)) + ")",
                     [i[0] for i in access])
                 subgroups += access
-            results += option + (self.depletion_bound(
-                option.spots, option.via, option.depletes, db), subgroups)
+            results.append(option + (self.depletion_bound(
+                option.spots, option.via, option.depletes, db), subgroups))
         if close:
             db.close()
         return [self.access_info(*option) for option in results]
@@ -335,13 +334,14 @@ class AccessRoot(AccessRouter):
             db.close()
         return results
 
-    @AccessRouter.route("/invite/<group>")
+    @access_lobby.template_json("/invite/<group>", "invite.html")
     def single_group_invite(self, group):
         return self.invite(group)
 
-    @AccessRouter.route("/invite")
+    @access_lobby.template_json("/invite", "invite.html")
     def invite(self, group=None):
-        ...
+        user = self.authorize()
+        return {"groups": self.user_groups(user, group and (group,))}
 
     creation_args = {
         "redirect": str,
@@ -358,7 +358,7 @@ class AccessRoot(AccessRouter):
             "deauthorizes": {0, 1, 2},
         }]}
 
-    @AccessRouter.route("/allow", methods=["POST"])
+    @access_lobby.route("/allow", methods=["POST"])
     def create(self):
         user = self.authorize()
         payload = json_payload(flask.request.body, self.creation_args)
@@ -378,8 +378,8 @@ class AccessRoot(AccessRouter):
             limits = db.queryone(
                 "SELECT until, spots, depletes, dos, deauthorizes "
                 "FROM limitations LEFT JOIN user_groups "
-                "ON limitations.users_group=user_groups.child_group "
-                "WHERE via=? AND user_groups.member=? AND active=1",
+                "ON users_group=child_group "
+                "WHERE via=? AND member=? AND active=1",
                 (invite.via, user), True)
             if limits is None:
                 db.close()
@@ -441,7 +441,7 @@ class AccessRoot(AccessRouter):
             "member": str,
         }]
 
-    @AccessRouter.route("/revoke", methods=["POST"])
+    @access_lobby.route("/revoke", methods=["POST"])
     def revoke(self):
         user = self.authorize()
         payload = json_payload(flask.request.body, self.removal_args)
@@ -457,14 +457,13 @@ class AccessRoot(AccessRouter):
             stack = filter(None, access_stack(db, access_group[0]))
             privledges = db.queryone(
                 "SELECT MAX(deauthorizes) FROM limitations " +
-                "LEFT JOIN user_groups " +
-                "ON limitations.users_group=user_groups.child_group " +
-                "WHERE user_groups.member=? AND user_groups.access_group IN (" +
+                "LEFT JOIN user_groups ON users_group=child_group " +
+                "WHERE member=? AND access_group IN (" +
                 ", ".join(("?",) * len(stack)) + ")", [user] + stack)
             if privledges is None or privledges[0] == 0:
                 db.close()
                 flask.abort(401)
-            if privledges[1] == 1:
+            if privledges[0] == 1:
                 users_group = db.queryone(
                     "SELECT users_group FROM limitations WHERE member=? AND "
                     "via=?", (revoking.member, revoking.invitation))
@@ -494,7 +493,7 @@ class AccessRoot(AccessRouter):
     # returns member, access_group, group_name, invite
     def deauthable(self, user, db=None):
         db = db or self.db().begin()
-        groups = self.user_groups(user, db)
+        groups = self.user_groups(user, db=db)
         permissions = [[], [], []]
         for group in groups:
             permissions[group.deauthorizes].append(group)
@@ -509,30 +508,33 @@ class AccessRoot(AccessRouter):
             ")", [group.child_group for group in childrens_groups], True)
         # permissions[2] access_group, group_name
         implied = set() if len(permissions[2]) == 0 else set(
-            i[0] for group in permissions[2] for i in group["implied_groups"])
+            i[0] for group in permissions[2] for i in group.implied_groups)
         # member, invite, access_group
         subgroupers = [] if len(implied) == 0 else db.queryall(
             "SELECT member, via, access_group FROM user_groups LEFT JOIN "
-            "limitations ON user_groups.child_group=limitations.users_group "
-            "WHERE access_group IN (" + ", ".join(("?",) * len(implied)) + ")",
-            list(implied))
+            "limitations ON child_group=users_group WHERE access_group IN (" +
+            ", ".join(("?",) * len(implied)) + ")", list(implied))
         # python joins because of recursive queries
         childrens_invites = dict(childrens_invites)
         child_names = [(
             group.member, childrens_invites[group.child_group],
             group.access_group) for group in childrens_groups]
-        match = [dict(share.implied_groups) for share in permissions[1:]]
+        match = [
+            [dict(share.implied_groups) for share in level]
+            for level in permissions[1:]]
         results = [[self.deauth_info(
             share.member, share.via, share.access_group,
             share.implied_groups[0][1]) for share in permissions[0]]]
         for group_names, user_groups in zip(match, (child_names, subgroupers)):
-            results.append(self.deauth_info(
-                *share, group_names[share[2]]) for share in user_groups)
+            results.append([
+                self.deauth_info(*share, names[share[2]])
+                for share, names in zip(user_groups, group_names)])
         return results
 
-    @AccessRouter.route("/remove")
+    @access_lobby.template_json("/remove", "remove.html")
     def remove(self):
-        ...
+        user = self.authorize()
+        return {"removable": self.deauthable(user)}
 
     # TODO: create invitation page
     # TODO: confirm acceptence page (for implies == -1)
@@ -557,7 +559,7 @@ class AccessGroup:
     def register(self, app):
         db = self.info.db(app).ctx.begin()
         uniq = self.uuid or str(uuid.uuid4())
-        parent = None if self.root else self.stack[-1].uuid
+        parent = None if self.root else self.stack[0].uuid
         access_id = db.queryone(
             "SELECT uuid FROM access_groups WHERE group_name=?",
             (self.qualname,))
@@ -578,10 +580,14 @@ class AccessGroup:
                         "VALUES (?, ?, ?)", self.info.owner + (owner,))
                 else:
                     owner = owner[0]
+                users_group = str(uuid.uuid4())
                 db.execute(
                     "INSERT INTO "
                     "user_groups(child_group, member, access_group) "
-                    "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
+                    "VALUES (?, ?, ?)", (users_group, owner, self.uuid))
+                db.execute(
+                    "INSERT INTO limitations(users_group, deauthorizes) VALUES "
+                    "(?, 2)", (users_group,))
         else:
             self.uuid = access_id[0]
         db.commit().close()

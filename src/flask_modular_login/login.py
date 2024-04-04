@@ -18,9 +18,13 @@ def safe_redirect(url, app=None):
     # point endpoints to the same flask app (same API token, different logins)
     # then the url redirect should be within the same host
     trusted = app.config['SESSION_COOKIE_DOMAIN'] or flask.request.host
-    checking = checking.removesuffix(":443")
-    return checking.scheme in ("", "https", "wss") and (
-        not checking or checking.endswith(trusted))
+    # cookies shared across ports
+    trimmed = checking.netloc.rsplit(":")[0]
+    trusted = trusted.rsplit(":")[0]
+    valid = not trimmed or trimmed.endswith(trusted)
+    if "localhost" in trusted:
+        return valid
+    return checking.scheme in ("", "https", "wss") and valid
 
 def get_next():
     try:
@@ -137,8 +141,10 @@ class DBStore(BaseStorage):
                 return None
 
             token, access, ip, authtime, refresh_time = info
+            info = list(info)
         else:
             token, access, ip, authtime, refresh_time = cached
+            cached = list(cached)
 
         if self.refresh_timeout and int(
                 time.time()) - authtime > self.refresh_timeout:
@@ -163,7 +169,7 @@ class DBStore(BaseStorage):
             write = True
 
         if info is not None:
-            self.cache.set(refresh, info)
+            self.cache.set(refresh, tuple(info))
 
         if write:
             db.commit()
