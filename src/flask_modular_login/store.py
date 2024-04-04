@@ -287,6 +287,15 @@ def threaded_client(app, config, args, kwargs):
 
 import json
 
+def dict_names(o):
+    if hasattr(o, "_asdict"):
+        o = o._asdict()
+    if any(isinstance(o, i) for i in (list, tuple)):
+        return tuple(dict_names(i) for i in o)
+    if isinstance(o, dict):
+        return {k: dict_names(v) for k, v in o.items()}
+    return o
+
 class RouteLobby:
     def __init__(self):
         self.routes = []
@@ -311,7 +320,7 @@ class RouteLobby:
                     if 300 <= res.status_code < 400:
                         flask.abort(401)
                     return res
-                return json.dumps(res)
+                return json.dumps(dict_names(res))
             def template(*a, **kw):
                 res = f(*a, **kw)
                 if isinstance(res, flask.Response):
