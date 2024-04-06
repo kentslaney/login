@@ -352,7 +352,7 @@ class AccessRoot:
             "access_expiration": {None, int},
             "invitees": {None, int},
             "plus": {None, int},
-            "via": str,
+            "auth": str, # via or users_group if added not from invite
             "depletes": bool,
             "dos": {None, int},
             "deauthorizes": {0, 1, 2},
@@ -372,15 +372,16 @@ class AccessRoot:
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
         initial_uuid = current_uuid = uuid.uuid4()
         next_uuid = None
+        now = time.time()
         for invite, last in reversed(zip(payload.invitations, first)):
             # user accepted via
             # user has access to group through via (limitations.active = 1)
             limits = db.queryone(
-                "SELECT until, spots, depletes, dos, deauthorizes "
+                "SELECT via, until, spots, depletes, dos, deauthorizes "
                 "FROM limitations LEFT JOIN user_groups "
-                "ON users_group=child_group "
-                "WHERE via=? AND member=? AND active=1",
-                (invite.via, user), True)
+                "ON users_group=child_group WHERE access_group=? AND "
+                "(via=? OR users_group=?) AND member=? AND active=1",
+                (invite.access_group, invite.auth, invite.auth, user), True)
             if limits is None:
                 db.close()
                 flask.abort(flask.Response("invalid source", code=401))
@@ -393,10 +394,22 @@ class AccessRoot:
                     invite.access_expiration is None or
                     invite.access_expiration > limits.until):
                 db.close()
+                flask.abort(flask.Response("unauthorized timing", code=400))
+            if invite.acceptance_expiration is not None and \
+                    invite.acceptance_expiration < now or \
+                    invite.access_expiration is not None and \
+                    0 < invite.access_expiration < now:
+                db.close()
+                flask.abort(flask.Response("invalid timing", code=400))
+            if invite.acceptance_expiration is not None and \
+                    invite.access_expiration is not None and \
+                    0 < invite.access_expiration and \
+                    invite.access_expiration < invite.acceptance_expiration:
+                db.close()
                 flask.abort(flask.Response("invalid timing", code=400))
             # invitees is less than or equal to depletion bound
             bound = self.depletion_bound(
-                limits.spots, invite.via, limits.depletes, db)
+                limits.spots, limits.via, limits.depletes, db)
             if bound is not None and (
                     invite.invitees is None or invite.invitees > bound):
                 db.close()
@@ -417,8 +430,8 @@ class AccessRoot:
             if invite.deauthorizes > limits.deauthorizes:
                 db.close()
                 flask.abort(flask.Response("can't deauthorize", code=401))
-            # depletes <= limits.depletes
-            if invite.depletes and not limits.depletes:
+            # depletes >= limits.depletes
+            if not invite.depletes and limits.depletes:
                 db.close()
                 flask.abort(flask.Response("must deplete", code=401))
             redirect = payload.redirect if last else None

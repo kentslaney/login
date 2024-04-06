@@ -1,3 +1,132 @@
+<!DOCTYPE html>
 <html>
-    {{ groups }}
+<form>
+    leave blank to not limit in that way
+    <br> <br>
+    some groups may be duplicated if you have multiple ways of accessing them,
+    each of which may have different limitations
+    <br><br>
+    if two groups start with the same string, the shorter one implies membership
+    in the longer one (if the first unmatched character is a separator)
+    <ul>
+    {% for group in groups %}
+    {% for implied in group.implied_groups %}
+    <div class="group">
+        <input type="checkbox" name="{{implied[0]}}" id="chk-{{implied[0]}}" />
+        <li>
+            <label for="chk-{{implied[0]}}">
+                <span>access_group</span>:
+                <pre><span>"{{implied[0]}}"</span></pre>; {{ implied[1] }}
+            </label>
+        </li>
+        <ul>
+            <li>
+                <span>acceptance_expiration</span> (sec):
+                &le; <span class="date">{{ group.until or "null" }}</span>
+                <input type="datetime-local" name="acceptance-{{implied[0]}}" />
+            </li>
+            <li>
+                <span>access_expiration</span> (sec):
+                &le; <span class="date">{{ group.until or "null" }}</span>
+                <ul>
+                    <li>
+                        <input type="radio" id="absolute-{{implied[0]}}"
+                            name="expiration-type-{{implied[0]}}" checked />
+                        <input type="datetime-local"
+                            name="access-{{implied[0]}}" />
+                    </li>
+                    <li>
+                        <input type="radio" id="relative-{{implied[0]}}"
+                            name="expiration-type-{{implied[0]}}" />
+                        <input type="text" name="access-num-{{implied[0]}}" />
+                        <label for="relative-{{implied[0]}}">
+                            (sec) after acceptance
+                        </label>
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <span>invitees</span>:
+                &le; <span>{{group.depletion_bound or "null" }}</span>
+                <input type="number" name="invitees-{{implied[0]}}" min=0
+                    value=1 />
+            </li>
+            <li>
+                <span>plus</span>:
+                &lt; <span>{{group.depletion_bound or "null"}}</span>
+                <input type="number" name="plus-{{implied[0]}}" min=0
+                    value=0 />
+            </li>
+            <li>
+                <span>auth</span>:
+                <pre><span>"{{group.via or group.child_group}}"</span></pre>
+            </li>
+            <li>
+                <label for="depletes-chk-{{implied[0]}}">
+                    <span>depletes</span>:
+                    <span>
+                        {{"[true]" if group.depletes else "[false, true]"}}
+                    </span>
+                </label>
+                <input type="checkbox" name="depletes-{{implied[0]}}"
+                    id="depletes-chk-{{implied[0]}}"
+                    {{'checked disabled' if group.depletes else ''}}" />
+            </li>
+            <li>
+                <span>dos</span>:
+                &lt; <span>{{group.dos or "null"}}</span>
+                <input type="number" name="dos-{{implied[0]}}" min=1
+                    value=1 />
+            </li>
+            <li>
+                <span>deauthorizes</span>:
+                &le; <span>{{group.deauthorizes}}</span>
+                <input type="number" name="plus-{{implied[0]}}" min=0 max=2
+                    value=0 />
+            </li>
+        </ul>
+    </div>
+    {% endfor %}
+    {% endfor %}
+    </ul>
+    <div>
+        <span>redirect</span>:
+        <input type="text" name="redirect" value="/" />
+        <br>
+        <label for="confirm-chk">
+            <span>confirm</span> upon acceptance:
+        </label>
+        <input type="checkbox" name="confirm" id="confirm-chk" />
+        <br>
+        <input type="submit" value="submit" />
+    </div>
+</form>
+<style>
+.group {
+    padding-bottom: 1px;
+}
+.group > input[type=checkbox] {
+    float: left;
+}
+.group > input[type=checkbox] + li {
+    list-style-type: none;
+}
+.group > input[type=checkbox]:not(:checked) ~ ul {
+    display: none;
+}
+pre {
+    display: inline;
+}
+</style>
+<script type="text/javascript">
+window.addEventListener("load", () => {
+    let dates = document.getElementsByClassName("date")
+    for (date of dates) {
+        let value = JSON.parse(date.innerText)
+        if (value !== null)
+            date.innerText = (new Date(value * 1e3)).toString()
+    }
+})
+</script>
 </html>
+
