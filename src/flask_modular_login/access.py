@@ -189,7 +189,10 @@ class AccessRoot:
             flask.abort(400)
         now = time.time()
         # invite hasn't expired
-        if info.access_expiration is not None and info.access_expiration < now:
+        if info.acceptance_expiration is not None and \
+                info.acceptance_expiration < now or \
+                info.access_expiration is not None and \
+                info.access_expiration < now:
             db.close()
             self.db().execute("DELETE FROM invitations WHERE uuid=?", (invite,))
             flask.abort(401)
@@ -256,7 +259,7 @@ class AccessRoot:
         "SELECT access_group, child_group, parents_group, member, "# user_groups
         "until, spots, via, depletes, dos, deauthorizes "# limitations
         "FROM limitations LEFT JOIN user_groups ON users_group=child_group "
-        "WHERE active=1 AND ")
+        "WHERE active=1 AND (until IS NULL or until>unixepoch()) AND ")
     access_info = collections.namedtuple("AccessInfo", (
         "access_group", "child_group", "parents_group", "member", "until",
         "spots", "via", "depletes", "dos", "deauthorizes", "depletion_bound",
@@ -341,7 +344,12 @@ class AccessRoot:
     @access_lobby.template_json("/invite", "invite.html")
     def invite(self, group=None):
         user = self.authorize()
-        return {"groups": self.user_groups(user, group and (group,))}
+        memberships = self.user_groups(user, group and (group,))
+        invitable = [
+            i for i in memberships if
+            (i.depletion_bound is None or i.depletion_bound > 0) and
+            (i.dos is None or i.dos > 1)]
+        return {"groups": invitable}
 
     creation_args = {
         "redirect": str,
@@ -380,7 +388,8 @@ class AccessRoot:
                 "SELECT via, until, spots, depletes, dos, deauthorizes "
                 "FROM limitations LEFT JOIN user_groups "
                 "ON users_group=child_group WHERE access_group=? AND "
-                "(via=? OR users_group=?) AND member=? AND active=1",
+                "(via=? OR users_group=?) AND member=? AND active=1 AND "
+                "(until IS NULL or until>unixepoch())",
                 (invite.access_group, invite.auth, invite.auth, user), True)
             if limits is None:
                 db.close()
@@ -471,7 +480,8 @@ class AccessRoot:
             privledges = db.queryone(
                 "SELECT MAX(deauthorizes) FROM limitations " +
                 "LEFT JOIN user_groups ON users_group=child_group " +
-                "WHERE member=? AND access_group IN (" +
+                "WHERE active=1 AND (until IS NULL or until>unixepoch()) AND" +
+                "member=? AND access_group IN (" +
                 ", ".join(("?",) * len(stack)) + ")", [user] + stack)
             if privledges is None or privledges[0] == 0:
                 db.close()
@@ -517,8 +527,9 @@ class AccessRoot:
         # users_group, invite
         childrens_invites = [] if len(childrens_groups) == 0 else db.queryall(
             "SELECT users_group, via FROM limitations WHERE active=1 AND "
-            "users_group IN (" + ", ".join(("?",) * len(childrens_groups)) +
-            ")", [group.child_group for group in childrens_groups], True)
+            "(until IS NULL or until>unixepoch()) AND users_group IN (" +
+            ", ".join(("?",) * len(childrens_groups)) + ")",
+            [group.child_group for group in childrens_groups], True)
         # permissions[2] access_group, group_name
         implied = set() if len(permissions[2]) == 0 else set(
             i[0] for group in permissions[2] for i in group.implied_groups)

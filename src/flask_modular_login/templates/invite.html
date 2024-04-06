@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html>
+leave blank to not limit in that way
+<br> <br>
+some groups may be duplicated if you have multiple ways of accessing them,
+each of which may have different limitations
+<br><br>
+if two groups start with the same string, the shorter one implies membership
+in the longer one if the first unmatched character is a separator
 <form>
-    leave blank to not limit in that way
-    <br> <br>
-    some groups may be duplicated if you have multiple ways of accessing them,
-    each of which may have different limitations
-    <br><br>
-    if two groups start with the same string, the shorter one implies membership
-    in the longer one (if the first unmatched character is a separator)
     <ul>
     {% for group in groups %}
     {% for implied in group.implied_groups %}
@@ -20,38 +20,41 @@
             </label>
         </li>
         <ul>
-            <li>
-                <span>acceptance_expiration</span> (sec):
-                &le; <span class="date">{{ group.until or "null" }}</span>
+            <li class="before">
+                <span>acceptance_expiration</span>: &le;
+                <span class="date">{{ group.until or "null" }}</span>
                 <input type="datetime-local" name="acceptance-{{implied[0]}}" />
             </li>
             <li>
-                <span>access_expiration</span> (sec):
+                <span>access_expiration</span>:
                 &le; <span class="date">{{ group.until or "null" }}</span>
-                <ul>
+                <ul class="alternate-inputs">
                     <li>
                         <input type="radio" id="absolute-{{implied[0]}}"
                             name="expiration-type-{{implied[0]}}" checked />
                         <input type="datetime-local"
                             name="access-{{implied[0]}}" />
+                        <label for="absolute-{{implied[0]}}">
+                            &ge; acceptance_expiration
+                        </label>
                     </li>
                     <li>
                         <input type="radio" id="relative-{{implied[0]}}"
                             name="expiration-type-{{implied[0]}}" />
-                        <input type="text" name="access-num-{{implied[0]}}" />
+                        <input type="number" name="access-num-{{implied[0]}}" />
                         <label for="relative-{{implied[0]}}">
-                            (sec) after acceptance
+                            days after acceptance (same maximum expiration time)
                         </label>
                     </li>
                 </ul>
             </li>
-            <li>
+            <li class="bounded-num">
                 <span>invitees</span>:
                 &le; <span>{{group.depletion_bound or "null" }}</span>
                 <input type="number" name="invitees-{{implied[0]}}" min=0
                     value=1 />
             </li>
-            <li>
+            <li class="bounded-num">
                 <span>plus</span>:
                 &lt; <span>{{group.depletion_bound or "null"}}</span>
                 <input type="number" name="plus-{{implied[0]}}" min=0
@@ -60,6 +63,8 @@
             <li>
                 <span>auth</span>:
                 <pre><span>"{{group.via or group.child_group}}"</span></pre>
+                <input type="hidden" name="auth-{{implied[0]}}"
+                    value="{{group.via or group.child_group}}" />
             </li>
             <li>
                 <label for="depletes-chk-{{implied[0]}}">
@@ -72,17 +77,17 @@
                     id="depletes-chk-{{implied[0]}}"
                     {{'checked disabled' if group.depletes else ''}}" />
             </li>
-            <li>
+            <li class="bounded-num">
                 <span>dos</span>:
                 &lt; <span>{{group.dos or "null"}}</span>
                 <input type="number" name="dos-{{implied[0]}}" min=1
                     value=1 />
             </li>
-            <li>
+            <li class="bounded-num">
                 <span>deauthorizes</span>:
                 &le; <span>{{group.deauthorizes}}</span>
-                <input type="number" name="plus-{{implied[0]}}" min=0 max=2
-                    value=0 />
+                <input type="number" name="deauthorizes-{{implied[0]}}" min=0
+                    max=2 value=0 />
             </li>
         </ul>
     </div>
@@ -91,7 +96,7 @@
     </ul>
     <div>
         <span>redirect</span>:
-        <input type="text" name="redirect" value="/" />
+        <input type="text" name="redirect" value="/" required />
         <br>
         <label for="confirm-chk">
             <span>confirm</span> upon acceptance:
@@ -119,12 +124,52 @@ pre {
 }
 </style>
 <script type="text/javascript">
+function date_ish(v) {
+    return v.toISOString().slice(0, -8)
+}
 window.addEventListener("load", () => {
-    let dates = document.getElementsByClassName("date")
-    for (date of dates) {
+    for (let date of document.getElementsByClassName("date")) {
         let value = JSON.parse(date.innerText)
-        if (value !== null)
-            date.innerText = (new Date(value * 1e3)).toString()
+        let sel = date.parentElement.querySelector("input[type=datetime-local]")
+        sel.min = date_ish(new Date())
+        if (value !== null) {
+            let end = new Date(value * 1e3)
+            date.innerText = end.toString()
+            sel.max = date_ish(end)
+        }
+    }
+    for (const alt of document.getElementsByClassName("alternate-inputs")) {
+        let num = alt.querySelector("input[type=number]")
+        let dated = alt.querySelector("input[type=datetime-local]")
+        num.addEventListener("keypress", ((sel) => () => {
+            sel.checked = true
+        })(num.parentElement.querySelector("input[type=radio]")))
+        dated.addEventListener("change", ((sel) => () => {
+            sel.checked = true
+        })(dated.parentElement.querySelector("input[type=radio]")))
+    }
+    for (const wrapper of document.getElementsByClassName("before")) {
+        let before = wrapper.querySelector("input[type=datetime-local]")
+        let after = wrapper.nextElementSibling.querySelector(
+            "input[type=datetime-local]")
+        before.addEventListener("change", ((before, after) => () => {
+            if (before.value === "") {
+                after.min = date_ish(new Date())
+            } else {
+                let updated = new Date(before.value)
+                if (new Date(after.value) < updated) {
+                    after.value = date_ish(updated)
+                }
+                after.min = date_ish(updated)
+            }
+        })(before, after))
+    }
+    for (const wrapper of document.getElementsByClassName("bounded-num")) {
+        const value = JSON.parse(Array.prototype.slice.call(
+            wrapper.querySelectorAll("span"), -1)[0].innerText)
+        if (value !== null) {
+            wrapper.querySelector("input[type=number]").max = value
+        }
     }
 })
 </script>
