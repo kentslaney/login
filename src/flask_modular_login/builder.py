@@ -40,7 +40,7 @@ class LoginBuilder:
     def g(self, value):
         flask.g.__setattr__(self.g_attr, value)
 
-    def bounce(self, group=None):
+    def bounce(self, redirect=None, group=None):
         # repeated in AccessRoot
         if group is not None:
             # TODO: request access page
@@ -48,11 +48,11 @@ class LoginBuilder:
         if flask.request.method == "GET":
             return flask.redirect(
                 self.endpoint + "?" + urllib.parse.urlencode(
-                    {"next": flask.request.url}))
+                    {"next": redirect or flask.request.url}))
         else:
             flask.abort(401)
 
-    def auth(self, required=True):
+    def auth(self, redirect=None, required=True):
         session_ = OAuthBlueprint.session(self.app)
         with self.app.app_context():
             # the flask dance blueprints modify the current context
@@ -62,31 +62,31 @@ class LoginBuilder:
             if not authorized(session_):
                 if not required:
                     return
-                return self.bounce()
+                return self.bounce(redirect)
             return {
                     "id": session_["user"],
                     "name": session_["name"],
                     "picture": session_["picture"],
                 }
 
-    def vet(self, user, group, required=True):
+    def vet(self, user, group, redirect=None, required=True):
         permissions = group.vet(self.app, user["id"])
         # TODO: cache
         if permissions is None:
-            return self.bounce(group) if required else user
+            return self.bounce(redirect, group) if required else user
         return {**user, "via": dict(zip(("group", "membership"), permissions))}
 
-    def decorate(self, kw=None, required=True, group=None):
+    def decorate(self, kw=None, required=True, group=None, redirect=None):
         def decorator(f):
             @functools.wraps(f)
             def wrapper(*args, **kwargs):
-                user = self.auth(required)
+                user = self.auth(redirect, required)
                 if user is None:
                     return f(*args, **kwargs)
                 elif not isinstance(user, dict):
                     return user
                 if group is not None:
-                    user = self.vet(user, group, required)
+                    user = self.vet(user, group, redirect, required)
                     if not isinstance(user, dict):
                         return user
                 if kw is None:
@@ -97,19 +97,21 @@ class LoginBuilder:
             return wrapper
         return decorator
 
-    def before_request(self, bp, required=True, group=None):
+    def before_request(self, bp, required=True, group=None, redirect=None):
         def user_auth():
-            res = self.auth(required)
+            res = self.auth(redirect, required)
             if not isinstance(res, dict):
                 return res
             elif group is not None:
-                res = self.vet(res, group, required)
+                res = self.vet(res, group, redirect, required)
                 if not isinstance(res, dict):
                     return res
             self.g = res
         bp.before_request(user_auth)
 
-    def login(self, ambiguous=None, kw=None, group=None, required=True):
+    def login(
+            self, ambiguous=None, kw=None, group=None, redirect=None,
+            required=True):
         if isinstance(ambiguous, AccessGroup):
             if group is not None:
                 raise TypeError(
@@ -122,19 +124,21 @@ class LoginBuilder:
                     f"{__class__.__name__}.login()"
                     " got multiple values for argument 'kw'")
             kw = ambiguous if kw is None else kw
-            return self.decorate(kw, required, group)
+            return self.decorate(kw, required, group, redirect)
         elif isinstance(ambiguous, flask.Blueprint) or \
                 isinstance(ambiguous, flask.Flask):
-            self.before_request(ambiguous, required, group)
+            self.before_request(ambiguous, required, group, redirect)
             return ambiguous
         elif callable(ambiguous):
-            return self.decorate(None, required, group)(ambiguous)
+            return self.decorate(None, required, group, redirect)(ambiguous)
 
-    def login_required(self, ambiguous=None, kw=None, group=None):
-        return self.login(ambiguous, kw, group, True)
+    def login_required(
+            self, ambiguous=None, kw=None, group=None, redirect=None):
+        return self.login(ambiguous, kw, group, redirect, True)
 
-    def login_optional(self, ambiguous=None, kw=None, group=None):
-        return self.login(ambiguous, kw, group, False)
+    def login_optional(
+            self, ambiguous=None, kw=None, group=None, redirect=None):
+        return self.login(ambiguous, kw, group, redirect, False)
 
     @property
     def decorators(self):
