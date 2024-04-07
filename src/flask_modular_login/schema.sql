@@ -35,13 +35,13 @@ CREATE TABLE ignore (
 
 -- TODO: check rowid order to ensure no loops
 CREATE TABLE access_groups (
-	uuid TEXT,
+	uuid TEXT NOT NULL,
 	group_name TEXT,
 	parent_group TEXT,
-	PRIMARY KEY(uuid),
+	PRIMARY KEY(group_name),
 	FOREIGN KEY(parent_group) REFERENCES access_groups(uuid)
 );
-CREATE UNIQUE INDEX group_names ON access_groups(group_name);
+CREATE UNIQUE INDEX group_names ON access_groups(uuid);
 CREATE TABLE user_groups (
 	parents_group TEXT,
 	child_group TEXT,

@@ -192,5 +192,5 @@ https://github.com/python-social-auth/social-core/blob/master/social_core/backen
 - type hints would be helpful
 - check SQL indicies
 - caching in various places
-- ...unit tests (ideally higher up but realistically here)
+- ...unit tests (hopefully higher up please)
 

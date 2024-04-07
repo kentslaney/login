@@ -582,15 +582,17 @@ class AccessGroup:
 
     def register(self, app):
         db = self.info.db(app).ctx.begin()
-        uniq = self.uuid or str(uuid.uuid4())
-        parent = None if self.root else self.stack[0].uuid
-        access_id = db.queryone(
-            "SELECT uuid FROM access_groups WHERE group_name=?",
-            (self.qualname,))
-        if access_id is None:
+        parent = None if self.root else self.stack[-2].uuid
+        access = db.queryone(
+            "SELECT parent_group, uuid FROM access_groups WHERE group_name=?",
+            (self.qualname,), True)
+        uniq = str(uuid.uuid4()) if access is None else access.uuid
+        if access is None or access.parent_group != parent:
+            # update if the access_group structure has changed
             db.execute(
                 "INSERT INTO access_groups(group_name, parent_group, uuid) "
-                "VALUES (?, ?, ?) ON CONFLICT(group_name) DO NOTHING",
+                "VALUES (?, ?, ?) ON CONFLICT(group_name) DO UPDATE SET "
+                "parent_group=excluded.parent_group",
                 (self.qualname, parent, uniq))
             self.uuid = uniq
             if self.root and self.info.owner is not None:
@@ -613,7 +615,7 @@ class AccessGroup:
                     "INSERT INTO limitations(users_group, deauthorizes) VALUES "
                     "(?, 2)", (users_group,))
         else:
-            self.uuid = access_id[0]
+            self.uuid = access.uuid
         db.commit().close()
 
     def contains(self, app, user):
