@@ -367,9 +367,11 @@ class AccessRoot:
         }]}
 
     @access_lobby.route("/allow", methods=["POST"])
-    def create(self):
+    def allow(self):
+        return self.create(json_payload(flask.request.body, self.creation_args))
+
+    def create(self, payload):
         user = self.authorize()
-        payload = json_payload(flask.request.body, self.creation_args)
         db = self.db().begin()
         if len(payload.invitations) == 0:
             db.close()
@@ -449,14 +451,14 @@ class AccessRoot:
             values.append(invite.limits + (
                 limits.until, implied, redirect, current_uuid,
                 None if last else next_uuid))
-            db.executemany(
-                "INSERT INTO invitations(" +
-                ", ".join(payload.invitations[0]._fields) +
-                ", access_limit, implied, redirect, uuid, implies) VALUES (" +
-                ", ".join(("?",) * (len(payload.invitations[0]) + 5)) +
-                ")", values)
-            db.commit().close()
-            return current_uuid
+        db.executemany(
+            "INSERT INTO invitations(" +
+            ", ".join(payload.invitations[0]._fields) +
+            ", access_limit, implied, redirect, uuid, implies) VALUES (" +
+            ", ".join(("?",) * (len(payload.invitations[0]) + 5)) +
+            ")", values)
+        db.commit().close()
+        return current_uuid
 
     removal_args = [{
             "invitation": str,
