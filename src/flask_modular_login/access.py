@@ -1,4 +1,4 @@
-import flask, uuid, collections, urllib.parse, time, json
+import flask, uuid, collections, urllib.parse, time, json, datetime
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -7,6 +7,8 @@ from login import authorized
 from store import RouteLobby
 
 end_locals()
+
+lenUUID = len(str(uuid.uuid4()))
 
 # returns stack of access groups going upwards from init
 # if extra is non empty, it also queries those columns
@@ -79,20 +81,20 @@ def isdescendant(db, user, parents_group):
 # templates with sets are considered enums, and value must be in that set
 # other than a nested set, sets can contain all the other kinds of templates
 # otherwise, the type of the value must match the type given in template
-def json_payload(self, value, template):
+def json_payload(value, template):
     def oxford_comma(terms):
         return " and ".join(terms) if len(terms) < 3 else \
             ", ".join(terms[:-1]) + ", and " + terms[-1]
 
     def ensure(payload, template, qualname=""):
-        part_name = f"payload" + (qualname or "_part_" + {qualname[1:]})
+        part_name = f"payload" + qualname
         requires = template if type(template) == type else type(template)
         if requires == set:
             assert len(template) > 0
             flag, has = type('flag', (), {})(), type(payload)
             it = ((flag, i) if type(i) == type else (i, flag) for i in template)
-            types, values = map(lambda x: set(x).difference({flag}), zip(*it))
-            if has in map(type, values).intersection({dict, list}):
+            values, types = map(lambda x: set(x).difference({flag}), zip(*it))
+            if has in set(map(type, values)).intersection({dict, list}):
                 for option in (i for i in values if type(i) == has):
                     try:
                         return ensure(payload, option, qualname)
@@ -100,9 +102,9 @@ def json_payload(self, value, template):
                         pass
             elif has in types or payload in values:
                 return payload
-            raise Exception("invalid enum")
-        if not isinstance(template, requires):
-            raise Exception(f"payload should be {requires}")
+            raise Exception(f"{part_name} has invalid value for enum")
+        if not isinstance(payload, requires):
+            raise Exception(f"{part_name} should be {requires}")
         if requires == dict:
             if template.keys() != payload.keys():
                 given, needed = set(payload.keys()), set(template.keys())
@@ -114,7 +116,8 @@ def json_payload(self, value, template):
                     v + k for k, v in xor if k)
                 raise Exception(message)
             ordered_names = tuple(sorted(template.keys()))
-            obj = collections.namedtuple(part_name, ordered_names)
+            obj = collections.namedtuple(
+                part_name.replace(".", "__"), ordered_names)
             return obj(**{
                 k: ensure(payload[k], template[k], qualname + f".{k}")
                 for k in ordered_names})
@@ -129,11 +132,11 @@ def json_payload(self, value, template):
     try:
         payload = json.loads(value)
     except json.decoder.JSONDecodeError:
-        flask.abort(flask.Response("invalid JSON", code=400))
+        flask.abort(400, description="invalid JSON")
     try:
         return ensure(payload, template)
     except Exception as e:
-        flask.abort(flask.Response(e.args[0], code=400))
+        flask.abort(400, description=e.args[0])
 
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 
@@ -204,6 +207,7 @@ class AccessRoot:
             db.close()
             flask.abort(400)
         # can't accept your own invite
+        # TODO: if it's an invite directly by user not a loop, confirm working
         child = info.inviter
         while child is not None:
             parent = db.queryone(
@@ -337,19 +341,24 @@ class AccessRoot:
             db.close()
         return results
 
-    @access_lobby.template_json("/invite/<group>", "invite.html")
+    @access_lobby.template_json(
+        "/invite/<group>", "invite.html", methods=["GET", "POST"])
     def single_group_invite(self, group):
         return self.invite(group)
 
-    @access_lobby.template_json("/invite", "invite.html")
+    @access_lobby.template_json(
+        "/invite", "invite.html", methods=["GET", "POST"])
     def invite(self, group=None):
         user = self.authorize()
-        memberships = self.user_groups(user, group and (group,))
-        invitable = [
-            i for i in memberships if
-            (i.depletion_bound is None or i.depletion_bound > 0) and
-            (i.dos is None or i.dos > 1)]
-        return {"groups": invitable}
+        if flask.request.method == "GET":
+            memberships = self.user_groups(user, group and (group,))
+            invitable = [
+                i for i in memberships if
+                (i.depletion_bound is None or i.depletion_bound > 0) and
+                (i.dos is None or i.dos > 1)]
+            return {"groups": invitable}
+        else:
+            return self.parse_invite(flask.request.form)
 
     creation_args = {
         "redirect": str,
@@ -368,34 +377,72 @@ class AccessRoot:
 
     @access_lobby.route("/allow", methods=["POST"])
     def allow(self):
-        return self.create(json_payload(flask.request.body, self.creation_args))
+        return self.create(flask.request.body)
+
+    def parse_invite(self, form):
+        if not form.get("redirect"):
+            flask.abort(400, description="missing redirect")
+        payload = {
+            "redirect": form.get("redirect"), "confirm": "confirm" in form,
+            "invitations": []}
+        try:
+            tz = datetime.timezone(
+                -datetime.timedelta(minutes=int(form.get("tz", 0))))
+        except ValueError:
+            flask.abort(400, description="invalid tz")
+        payload["invitations"] = [
+            {"access_group": i, **{
+                k[:-lenUUID - 1]: form[k] for k in form.keys()
+                if k.endswith(i) and k != i}}
+            for i in form.keys() if len(i) == lenUUID and i[-22] == "4"]
+        if len(payload["invitations"]) == 0:
+            flask.abort(400, description="no invite groups")
+        for group in payload["invitations"]:
+            for dated in ("access_expiration", "acceptance_expiration"):
+                value = group.get(dated)
+                if value is not None:
+                    group[dated] = int(datetime.datetime.fromisoformat(
+                        value).replace(tzinfo=tz).timestamp())
+            relative = group.pop("access-num", None)
+            if relative and group.pop(
+                    "expiration-type", "").startswith("relative"):
+                group["access_expiration"] = -int(float(relative) * 86400)
+            group['depletes'] = 'depletes' in group
+            for num in ("invitees", "plus", "dos", "deauthorizes"):
+                try:
+                    group[num] = None if group.get(num) in (None, '') \
+                        else json.loads(group[num])
+                except ValueError:
+                    flask.abort(400, description=f"invalid {num}")
+        return self.create(json.dumps(payload))
 
     def create(self, payload):
+        payload = json_payload(payload, self.creation_args)
         user = self.authorize()
         db = self.db().begin()
         if len(payload.invitations) == 0:
             db.close()
-            flask.abort(flask.Response("no invites", code=400))
+            flask.abort(400, description="no invites")
         if not payload.redirect:
             db.close()
-            flask.abort(flask.Response("bad redirect", code=400))
+            flask.abort(400, description="bad redirect")
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
         initial_uuid = current_uuid = uuid.uuid4()
         next_uuid = None
         now = time.time()
-        for invite, last in reversed(zip(payload.invitations, first)):
+        for invite, last in reversed(tuple(zip(payload.invitations, first))):
             # user accepted via
             # user has access to group through via (limitations.active = 1)
             limits = db.queryone(
-                "SELECT via, until, spots, depletes, dos, deauthorizes "
-                "FROM limitations LEFT JOIN user_groups "
+                "SELECT via, until, spots, depletes, dos, deauthorizes, "
+                "users_group FROM limitations LEFT JOIN user_groups "
                 "ON users_group=child_group WHERE access_group=? AND "
                 "(via=? OR users_group=?) AND member=? AND active=1 AND "
                 "(until IS NULL or until>unixepoch())",
                 (invite.access_group, invite.auth, invite.auth, user), True)
             if limits is None:
                 db.close()
-                flask.abort(flask.Response("invalid source", code=401))
+                flask.abort(401, description="invalid source")
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
             #     (limited by access_limit)
@@ -405,52 +452,52 @@ class AccessRoot:
                     invite.access_expiration is None or
                     invite.access_expiration > limits.until):
                 db.close()
-                flask.abort(flask.Response("unauthorized timing", code=400))
+                flask.abort(400, description="unauthorized timing")
             if invite.acceptance_expiration is not None and \
                     invite.acceptance_expiration < now or \
                     invite.access_expiration is not None and \
                     0 < invite.access_expiration < now:
                 db.close()
-                flask.abort(flask.Response("invalid timing", code=400))
+                flask.abort(400, description="invalid timing")
             if invite.acceptance_expiration is not None and \
                     invite.access_expiration is not None and \
                     0 < invite.access_expiration and \
                     invite.access_expiration < invite.acceptance_expiration:
                 db.close()
-                flask.abort(flask.Response("invalid timing", code=400))
+                flask.abort(400, description="invalid timing")
             # invitees is less than or equal to depletion bound
             bound = self.depletion_bound(
                 limits.spots, limits.via, limits.depletes, db)
             if bound is not None and (
                     invite.invitees is None or invite.invitees > bound):
                 db.close()
-                flask.abort(flask.Response("too many invitees", code=400))
+                flask.abort(400, description="too many invitees")
             # plus < spots
             if limits.spots is not None and (
                     invite.plus is None or invite.plus >= limits.spots):
                 db.close()
-                flask.abort(flask.Response("too many plus ones", code=400))
+                flask.abort(400, description="too many plus ones")
             # 0 < dos < limits.dos
             if limits.dos is not None if invite.dos is None else (
-                    0 == invite.dos or
-                    limits.dos is None and invite.dos >= limits.dos):
+                    0 > invite.dos and (
+                        limits.dos is None or invite.dos >= limits.dos)):
                 db.close()
-                flask.abort(flask.Response(
-                   "invalid degrees of separation", code=400))
+                flask.abort(400, description="invalid degrees of separation")
             # invite deauthorizes <= limitations.deauthorizes
             if invite.deauthorizes > limits.deauthorizes:
                 db.close()
-                flask.abort(flask.Response("can't deauthorize", code=401))
+                flask.abort(401, description="can't deauthorize")
             # depletes >= limits.depletes
             if not invite.depletes and limits.depletes:
                 db.close()
-                flask.abort(flask.Response("must deplete", code=401))
+                flask.abort(401, description="must deplete")
             redirect = payload.redirect if last else None
             implied = (-1 if payload.confirm else 0) if next_uuid is None else 1
             current_uuid, next_uuid = uuid.uuid4(), current_uuid
-            values.append(invite.limits + (
+            values.append(invite + (
                 limits.until, implied, redirect, current_uuid,
                 None if last else next_uuid))
+        # TODO: auth, payload.depletes is bool
         db.executemany(
             "INSERT INTO invitations(" +
             ", ".join(payload.invitations[0]._fields) +

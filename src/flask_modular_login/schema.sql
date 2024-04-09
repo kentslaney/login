@@ -51,7 +51,6 @@ CREATE TABLE user_groups (
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
 );
 CREATE UNIQUE INDEX shares ON user_groups(child_group);
-CREATE UNIQUE INDEX invited ON user_groups(parents_group, member);
 CREATE INDEX membership ON user_groups(member, access_group);
 CREATE TABLE invitations (
 	uuid TEXT,
@@ -69,6 +68,9 @@ CREATE TABLE invitations (
 	implied INT DEFAULT 0, /* -1, 0, 1 */
 	redirect TEXT,
 	PRIMARY KEY(uuid),
+    --TODO: why isn't this limitations?
+    --      I can join invitations with limitations on inviter
+    --      so depletes as text is redundant since it's also limitations.via
 	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
 	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
 	FOREIGN KEY(access_group) REFERENCES access_groups(uuid),

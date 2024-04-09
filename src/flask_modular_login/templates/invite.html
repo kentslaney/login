@@ -7,7 +7,7 @@ each of which may have different limitations
 <br><br>
 if two groups start with the same string, the shorter one implies membership
 in the longer one if the first unmatched character is a separator
-<form>
+<form method="POST">
     <ul>
     {% for group in groups %}
     {% for implied in group.implied_groups %}
@@ -23,7 +23,8 @@ in the longer one if the first unmatched character is a separator
             <li class="before">
                 <span>acceptance_expiration</span>: &le;
                 <span class="date">{{ group.until or "null" }}</span>
-                <input type="datetime-local" name="acceptance-{{implied[0]}}" />
+                <input type="date"
+                    name="acceptance_expiration-{{implied[0]}}" />
             </li>
             <li>
                 <span>access_expiration</span>:
@@ -31,15 +32,17 @@ in the longer one if the first unmatched character is a separator
                 <ul class="alternate-inputs">
                     <li>
                         <input type="radio" id="absolute-{{implied[0]}}"
+                            value="absolute-{{implied[0]}}"
                             name="expiration-type-{{implied[0]}}" checked />
-                        <input type="datetime-local"
-                            name="access-{{implied[0]}}" />
+                        <input type="date"
+                            name="access_expiration-{{implied[0]}}" />
                         <label for="absolute-{{implied[0]}}">
                             &ge; acceptance_expiration
                         </label>
                     </li>
                     <li>
                         <input type="radio" id="relative-{{implied[0]}}"
+                            value="relative-{{implied[0]}}"
                             name="expiration-type-{{implied[0]}}" />
                         <input type="number" name="access-num-{{implied[0]}}" />
                         <label for="relative-{{implied[0]}}">
@@ -95,6 +98,7 @@ in the longer one if the first unmatched character is a separator
     {% endfor %}
     </ul>
     <div>
+        <input type="hidden" id="tz" name="tz" />
         <span>redirect</span>:
         <input type="text" name="redirect" value="/" required />
         <br>
@@ -125,12 +129,13 @@ pre {
 </style>
 <script type="text/javascript">
 function date_ish(v) {
+    return v.toISOString().slice(0, -14)
     return v.toISOString().slice(0, -8)
 }
 window.addEventListener("load", () => {
     for (let date of document.getElementsByClassName("date")) {
         let value = JSON.parse(date.innerText)
-        let sel = date.parentElement.querySelector("input[type=datetime-local]")
+        let sel = date.parentElement.querySelector("input[type=date]")
         sel.min = date_ish(new Date())
         if (value !== null) {
             let end = new Date(value * 1e3)
@@ -140,7 +145,7 @@ window.addEventListener("load", () => {
     }
     for (const alt of document.getElementsByClassName("alternate-inputs")) {
         let num = alt.querySelector("input[type=number]")
-        let dated = alt.querySelector("input[type=datetime-local]")
+        let dated = alt.querySelector("input[type=date]")
         num.addEventListener("keypress", ((sel) => () => {
             sel.checked = true
         })(num.parentElement.querySelector("input[type=radio]")))
@@ -149,9 +154,9 @@ window.addEventListener("load", () => {
         })(dated.parentElement.querySelector("input[type=radio]")))
     }
     for (const wrapper of document.getElementsByClassName("before")) {
-        let before = wrapper.querySelector("input[type=datetime-local]")
+        let before = wrapper.querySelector("input[type=date]")
         let after = wrapper.nextElementSibling.querySelector(
-            "input[type=datetime-local]")
+            "input[type=date]")
         before.addEventListener("change", ((before, after) => () => {
             if (before.value === "") {
                 after.min = date_ish(new Date())
@@ -171,6 +176,7 @@ window.addEventListener("load", () => {
             wrapper.querySelector("input[type=number]").max = value
         }
     }
+    document.getElementById('tz').value = (new Date()).getTimezoneOffset();
 })
 </script>
 </html>
