@@ -231,10 +231,9 @@ class HeadlessDB:
             for i in words[1:]), [])))
         terms = iter(zip(reversed(map(bool, range(len(terms)))), terms))
         for conts, word in terms:
-            assert ord('a') <= ord(word[0]) <= ord('z')
-            # attr problems
-            assert all(i not in word for i in "()*'\"- ")
-            if word in exprs:
+            start = ord('a') <= ord(word[0]) <= ord('z')
+            containing = any(i in word for i in "()*'\"- ")
+            if not start or containing or word in exprs:
                 conts, word = cls.expr_name(conts, word, terms)
                 assert not conts or word == ","
                 continue
