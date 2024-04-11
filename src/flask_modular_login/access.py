@@ -450,9 +450,13 @@ class AccessRoot:
             if users_group is None:
                 db.close()
                 flask.abort(401, description="invalid source")
-            limits = db.queryone(
-                "SELECT depletes, dos, deauthorizes, FROM invitations"
-                "WHERE inviter=?", (invite.access_group), True)
+            if invite.parent_group is None:
+                limits = collections.namedtuple("limits", (
+                    "depletes", "dos", "deauthorizes"))(False, None, 2)
+            else:
+                limits = db.queryone(
+                    "SELECT depletes, dos, deauthorizes FROM invitations"
+                    "WHERE inviter=?", (invite.parent_group,), True)
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
             #     (limited by access_limit)
@@ -565,6 +569,7 @@ class AccessRoot:
                 if not child:
                     db.close()
                     flask.abort(401)
+            # no need to check privledges for deauthorizes in (2, None)
         db.executemany("UPDATE user_groups SET active=0 WHERE uuid=?", payload)
         db.execute().close()
 
