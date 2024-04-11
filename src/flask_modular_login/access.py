@@ -262,7 +262,7 @@ class AccessRoot:
 
     @staticmethod
     # selecting columns needed to know what invites selected can create
-    def group_query(member=None, access_groups=()):
+    def group_query(db, member=None, access_groups=()):
         assert member or access_group
         member_query = ((), ()) if not member else (("member=?",), (member,))
         access_groups_query = ((), ()) if not access_groups else ((
@@ -305,7 +305,7 @@ class AccessRoot:
     def user_groups(self, user=None, groups=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
-        info = self.group_query(user, () if groups is none else groups)
+        info = self.group_query(db, user, () if groups is None else groups)
         access_names = {} if len(info) == 0 else dict(db.queryall(
             "SELECT uuid, group_name FROM access_groups WHERE uuid IN (" +
             ", ".join(("?",) * len(info)) + ")",
@@ -341,7 +341,7 @@ class AccessRoot:
         for group in group_names:
             stack[group[0]] = access_stack(db, group, ("group_name",))
         uniq = set(sum([i[0] for i in stack.values()], []))
-        info = self.group_query(access_groups=uniq)
+        info = self.group_query(db, access_groups=uniq)
         results = [self.access_info(
             *option, self.depletion_bound(
                 db, option.via, option.depletes, option.spots),
