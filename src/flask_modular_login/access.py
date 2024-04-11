@@ -644,7 +644,6 @@ class AccessGroup:
             "SELECT parent_group, uuid FROM access_groups WHERE group_name=?",
             (self.qualname,), True)
         uniq = str(uuid.uuid4()) if access is None else access.uuid
-        # TODO: what if owner gets updated?
         if access is None or access.parent_group != parent:
             # update if the access_group structure has changed
             db.execute(
@@ -653,24 +652,30 @@ class AccessGroup:
                 "parent_group=excluded.parent_group",
                 (self.qualname, parent, uniq))
             self.uuid = uniq
-            if self.root and self.info.owner is not None:
-                owner = db.queryone(
-                    "SELECT uuid FROM auths WHERE method=? AND platform_id=?",
-                    self.info.owner)
-                if owner is None:
-                    owner = str(uuid.uuid4())
-                    db.execute(
-                        "INSERT INTO auths(method, platform_id, uuid) "
-                        "VALUES (?, ?, ?)", self.info.owner + (owner,))
-                else:
-                    owner = owner[0]
-                users_group = str(uuid.uuid4())
+        else:
+            self.uuid = access.uuid
+
+        if self.info.owner is not None and self.root:
+            owner = db.queryone(
+                "SELECT uuid FROM auths WHERE method=? AND platform_id=?",
+                self.info.owner)
+            if owner is None:
+                owner = str(uuid.uuid4())
+                db.execute(
+                    "INSERT INTO auths(method, platform_id, uuid) "
+                    "VALUES (?, ?, ?)", self.info.owner + (owner,))
+                changed=True
+            else:
+                owner = owner[0]
+                changed = db.queryone(
+                    "SELECT 1 FROM user_groups WHERE parents_group IS NULL AND "
+                    "until IS NULL AND spots IS NULL AND active=1 AND "
+                    "member=? AND access_group=?", (owner, self.uuid)) is None
+            if changed:
                 db.execute(
                     "INSERT INTO "
                     "user_groups(child_group, member, access_group) "
-                    "VALUES (?, ?, ?)", (users_group, owner, self.uuid))
-        else:
-            self.uuid = access.uuid
+                    "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
         db.commit().close()
 
     def contains(self, app, user):
