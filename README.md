@@ -193,4 +193,5 @@ https://github.com/python-social-auth/social-core/blob/master/social_core/backen
 - check SQL indicies
 - caching in various places
 - ...unit tests (hopefully higher up please)
+- get a security audit from someone else
 

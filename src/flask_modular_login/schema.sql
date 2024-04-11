@@ -12,7 +12,7 @@ CREATE TABLE active (
 	uuid TEXT,
 	access_token TEXT,
 	refresh TEXT,
-	ip TEXT,
+	ip TEXT, -- TODO: keep history?
 	authtime FLOAT,
 	refresh_time FLOAT,
 	FOREIGN KEY(uuid) REFERENCES auths(uuid) ON DELETE CASCADE
@@ -41,55 +41,41 @@ CREATE TABLE access_groups (
 	PRIMARY KEY(group_name),
 	FOREIGN KEY(parent_group) REFERENCES access_groups(uuid)
 );
-CREATE UNIQUE INDEX group_names ON access_groups(uuid);
 CREATE TABLE user_groups (
+	uuid TEXT NOT NULL,
 	parents_group TEXT,
-	child_group TEXT,
-	member TEXT,
-	access_group TEXT,
+	member TEXT NOT NULL,
+	access_group TEXT NOT NULL,
+	until INT,
+	spots INT,
+	active BOOLEAN DEFAULT 1,
+    PRIMARY KEY(uuid),
 	FOREIGN KEY(member) REFERENCES auths(uuid),
-	FOREIGN KEY(access_group) REFERENCES access_groups(uuid)
+	FOREIGN KEY(access_group) REFERENCES access_groups(uuid),
+	FOREIGN KEY(parents_group) REFERENCES user_groups(uuid)
 );
-CREATE UNIQUE INDEX shares ON user_groups(child_group);
 CREATE INDEX membership ON user_groups(member, access_group);
 CREATE TABLE invitations (
 	uuid TEXT,
-	inviter TEXT,
-	access_group TEXT,
+	inviter TEXT, -- joins on either uuid or parents_group
 	acceptance_expiration INT,
 	access_expiration INT,
 	access_limit INT,
-	invitees INT,
+	invitees INT DEFAULT 0,
 	plus INT,
-	depletes TEXT,
+	depletes BOOL,
 	dos INT, /* degrees of separation */
-	deauthorizes INT DEFAULT 0, /* 0, 1, 2 */
+	deauthorizes INT NOT NULL DEFAULT 0, /* 0, 1, 2 */
 	implies TEXT,
 	implied INT DEFAULT 0, /* -1, 0, 1 */
 	redirect TEXT,
+	active BOOLEAN DEFAULT 1,
 	PRIMARY KEY(uuid),
-    --TODO: why isn't this limitations?
-    --      I can join invitations with limitations on inviter
-    --      so depletes as text is redundant since it's also limitations.via
-	FOREIGN KEY(depletes) REFERENCES invitations(uuid),
-	FOREIGN KEY(inviter) REFERENCES user_groups(child_group),
-	FOREIGN KEY(access_group) REFERENCES access_groups(uuid),
+	FOREIGN KEY(inviter) REFERENCES user_groups(uuid),
 	FOREIGN KEY(implies) REFERENCES invitations(uuid),
 	CHECK((implies IS NULL) <> (redirect IS NULL)),
 	CHECK(deauthorizes >= 0 AND deauthorizes <= 2),
-	CHECK(implied >= -1 AND deauthorizes <= 1)
-);
-CREATE TABLE limitations (
-	users_group TEXT,
-	active BOOLEAN DEFAULT 1,
-	until INT,
-	spots INT,
-	via TEXT,
-	depletes BOOLEAN,
-	dos INT,
-	deauthorizes INT DEFAULT 0,
-	FOREIGN KEY(users_group) REFERENCES user_groups(child_group),
-	FOREIGN KEY(via) REFERENCES invitations(uuid),
-	CHECK(deauthorizes >= 0 AND deauthorizes <= 2)
+	CHECK(implied >= -1 AND implied <= 1),
+	CHECK(dos >= 0)
 );
 

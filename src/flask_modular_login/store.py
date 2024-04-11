@@ -204,40 +204,59 @@ class HeadlessDB:
     #     machine which can be parsed if needbe.
     # Current limitations include aliased expressions.
     # Should fail if it can't parse the values.
-    @staticmethod
-    def names(query, values, rowid=None):
+    @classmethod
+    def names(cls, query, values, rowid=None):
+        # https://www.sqlite.org/lang_select.html
+        endings = {
+            "from", "where", "group", "having", "window", "order", "limit",
+            "union", "intersect", "except"}
+        # https://www.sqlite.org/syntax/expr.html
+        exprs = {
+            "null", "true", "false", "current_time", "current_date",
+            "current_timestamp", "is", "not", "and", "or", "in", "match",
+            "like", "regexp", "glob", "collate", "isnull", "notnull",
+            "between", "case", "cast", "raise"}
         words = query.lower().split()
         assert words[0] == "select"
         assert words[1] not in ("distinct", "all")
+        for i, word in enumerate(words):
+            if word in endings:
+                words = words[:i]
+                break
+
         names = []
-        terms = iter(filter(None, sum((
+        # split words out commas
+        terms = tuple(filter(None, sum((
             sum(([j, ","] for j in i.split(",")), [])[:-1]
             for i in words[1:]), [])))
-        for word in terms:
+        terms = iter(zip(reversed(map(bool, range(len(terms)))), terms))
+        for conts, word in terms:
             assert ord('a') <= ord(word[0]) <= ord('z')
-            # https://www.sqlite.org/syntax/expr.html
-            assert word not in (
-                "null", "true", "false", "current_time", "current_date",
-                "current_timestamp", "is", "not", "and", "or", "in", "match",
-                "like", "regexp", "glob", "collate", "isnull", "notnull",
-                "between", "case", "cast", "raise")
             # attr problems
             assert all(i not in word for i in "()*'\"- ")
+            if word in exprs:
+                conts, word = cls.expr_name(conts, word, terms)
+                assert not conts or word == ","
+                continue
             names.append(word.rsplit(".", 1)[-1])
-            word = next(terms)
-            if word != ",":
-                assert not word.startswith("(")
-                if word == "as":
-                    names[-1] = next(terms)
-                    word = next(terms)
-                    if word == ",":
-                        continue
+            if not conts:
                 break
+            conts, word = next(terms)
+            if word == "as":
+                conts, names[-1] = next(terms)
+                if not conts:
+                    break
+                conts, word = next(terms)
+            assert word == ","
         assert len(names) == len(values)
         assert len(names) == len(set(names))
         obj = collections.namedtuple(
             "row" + ("" if rowid is None else str(rowid)), names)
         return obj(**dict(zip(names, values)))
+
+    @staticmethod
+    def expr_name(conts, word, terms):
+        assert False
 
     def db_init_hook(self):
         pass

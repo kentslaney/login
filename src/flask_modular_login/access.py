@@ -33,15 +33,15 @@ def ismember(db, user, group):
     stack = access_stack(db, group) if isinstance(group, str) else group
     for superset in reversed(stack):
         permission = None if superset is None else db.queryone(
-            "SELECT child_group, until FROM user_groups LEFT JOIN limitations "
-            "ON child_group=users_group WHERE member=? AND access_group=? AND "
+            "SELECT uuid, until FROM user_groups "
+            "WHERE member=? AND access_group=? AND "
             "active=1 ORDER BY until DESC NULLS FIRST",
             (user, superset))
         if permission is not None:
             if permission[1] is not None and permission[1] < time.time():
                 # deactivate if it's past access expiration
                 db.execute(
-                    "UPDATE limitations SET active=0 WHERE users_group=?",
+                    "UPDATE user_groups SET active=0 WHERE uuid=?",
                     (permission[0],))
                 db.commit()
             else:
@@ -50,15 +50,16 @@ def ismember(db, user, group):
 # queries is either a str reprsenting a user UUID or a list of `users_group`s
 def descendants(db, queries):
     results = []
-    children = queries if type(queries) is not str else db.queryall(
-        "SELECT child_group FROM user_groups WHERE member=?", (queries,), True)
+    children = queries if type(queries) is not str else sum(db.queryall(
+        "SELECT uuid FROM user_groups WHERE member=?", (queries,)), ())
+    children = filter(None, children)
     while children:
         children = db.queryall(
-            "SELECT parents_group, child_group, member, access_group " +
+            "SELECT parents_group, uuid, member, access_group " +
             "FROM user_groups WHERE parents_group IN (" +
-            ", ".join(("?",) * len(children)) +
-            ")", filter(None, [child.child_group for child in children]), True)
+            ", ".join(("?",) * len(children)) + ")", children, True)
         results += children
+        children = tuple(filter(None, (child.uuid for child in children)))
     return results
 
 # checks if a group descends from user, returns None if not
@@ -66,7 +67,7 @@ def descendants(db, queries):
 def isdescendant(db, user, parents_group):
     while parents_group:
         parent = db.queryone(
-            "SELECT member, parents_group FROM user_groups WHERE child_group=?",
+            "SELECT member, parents_group FROM user_groups WHERE uuid=?",
             (parents_group,), True)
         if parent is None:
             return None
@@ -180,10 +181,10 @@ class AccessRoot:
         user = self.authorize()
         db = db or self.db().begin()
         info = db.queryone(
-            "SELECT inviter, access_group, acceptance_expiration, access_limit,"
+            "SELECT inviter, acceptance_expiration, access_limit,"
             "access_expiration, invitees, plus, depletes, dos, deauthorizes, "
-            "implies, implied, redirect FROM invitations WHERE uuid=?",
-            (invite,), True)
+            "implies, implied, redirect FROM invitations WHERE active=1 AND "
+            "uuid=?", (invite,), True)
         if info is None:
             db.close()
             flask.abort(410)
@@ -195,89 +196,106 @@ class AccessRoot:
         if info.acceptance_expiration is not None and \
                 info.acceptance_expiration < now or \
                 info.access_expiration is not None and \
-                info.access_expiration < now:
+                info.access_expiration < now or \
+                info.access_limit is not None and \
+                info.access_limit < now:
             db.close()
-            self.db().execute("DELETE FROM invitations WHERE uuid=?", (invite,))
+            self.db().execute(
+                "UPDATE invitations SET active=0 WHERE uuid=?", (invite,))
             flask.abort(401)
         # can't accept the same invite twice
-        accepted = db.queryone(
-            "SELECT EXISTS(SELECT 1 FROM limitations "
-            "WHERE member=? AND via=? LIMIT 1)", (user, invite))
-        if accepted[0]:
+        user_group = db.queryone(
+            "SELECT parents_group, member, access_group, spots"
+            "FROM user_groups WHERE uuid=?", (info.inviter,), True)
+        if user_group.member == user:
             db.close()
-            flask.abort(400)
+            return f"invite working, {user_group.spots} left"
         # can't accept your own invite
-        # TODO: if it's an invite directly by user not a loop, confirm working
         child = info.inviter
         while child is not None:
             parent = db.queryone(
                 "SELECT member, parents_group FROM user_groups "
-                "WHERE child_group=?", (child,))
+                "WHERE uuid=?", (child,), True)
             if parent is None:
                 break
-            if parent[0] == user:
+            if parent.member == user:
                 db.close()
                 flask.abort(412)
-            child = parent[1]
+            child = parent.parents_group
         # lower depletions; invites' invitees is not None if depletes
-        lower, count, parent = invite, info.invitees, info.depletes
-        while count is not None:
-            if count == 0:
-                # none left, don't execute depletions
-                db.close()
-                flask.abort(404)
-            else:
-                db.execute(
-                    "UPDATE invitations SET invitees=? WHERE uuid=?",
-                    (count - 1, lower))
-            if parent is None:
-                break
-            else:
+        lower, depletes = info.inviter, info.depletes
+        if depletes:
+            count, parent = user_group.spots, user_groups.parent_group
+            while count is not None and parent is not None:
+                if count == 0:
+                    # none left, don't execute depletions
+                    db.close()
+                    flask.abort(404)
+                else:
+                    db.execute(
+                        "UPDATE invitations SET invitees=? WHERE uuid=?",
+                        (count - 1, lower))
                 lower = parent
+                depletes = db.queryone(
+                    "SELECT depletes FROM invitations WHERE inviter=?",
+                    (parent,))[0]
+                if not depletes:
+                    break
                 # FK implies unpackable
                 count, parent = db.queryone(
-                    "SELECT invitees, depletes FROM invitations "
+                    "SELECT spots, parents_group FROM user_groups "
                     "WHERE uuid=?", (parent,))
-        child_group = str(uuid.uuid4())
-        db.execute(
-            "INSERT INTO user_groups(parents_group, child_group, member, "
-            "access_group) VALUES (?, ?, ?, ?)",
-            (info.inviter, child_group, user, info.access_group))
+        creating = str(uuid.uuid4())
         until = info.access_expiration
         if until is not None and until < 0:
             until = min(now + until, info.access_limit)
-        dos = info.dos and (info.dos - 1)
-        # depletes via
         db.execute(
-            "INSERT INTO limitations(users_group, until, spots, via, "
-            "depletes, dos, deauthorizes) VALUES (?, ?, ?, ?, ?, ?, ?)", (
-                child_group, until, info.plus, invite,
-                info.depletes is not None, dos, info.deauthorizes))
+            "INSERT INTO user_groups(uuid, parents_group, member, "
+            "access_group, until, spots) VALUES (?, ?, ?, ?)", (
+                creating, info.inviter, user, users_group.access_group, until,
+                info.invitees))
+        dos = info.dos and (info.dos - 1)
         if info.implies is not None:
             return self.accept(info.implies, db, True)
         db.commit().close()
         return flask.redirect(info.redirect)
 
+    @staticmethod
     # selecting columns needed to know what invites selected can create
-    group_query=(
-        "SELECT access_group, child_group, parents_group, member, "# user_groups
-        "until, spots, via, depletes, dos, deauthorizes "# limitations
-        "FROM limitations LEFT JOIN user_groups ON users_group=child_group "
-        "WHERE active=1 AND (until IS NULL or until>unixepoch()) AND ")
+    def group_query(member=None, access_groups=()):
+        assert member or access_group
+        member_query = ((), ()) if not member else (("member=?",), (member,))
+        access_groups_query = ((), ()) if not access_groups else ((
+            "user_groups.access_group IN (" +
+            ", ".join(("?",) * len(access_groups)) + ")",), access_groups)
+        groups = db.queryall(
+            "SELECT user_groups.uuid, parents_group, member, access_group, " +
+            "until, spots, depletes, dos, " +
+            #"CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END AS " +
+            "deauthorizes FROM user_groups " +
+            "LEFT JOIN invitations ON inviter=parents_group WHERE " +
+            "(invitations.active IS NULL OR invitations.active=1) AND " +
+            "(until IS NULL or until>unixepoch()) AND " +
+            " AND ".join(member_query[0] + access_groups_query[0]),
+            member_query[1] + access_groups_query[1], True)
+        return [
+            group._replace(deauthorizes=2) if group.deauthorizes is None else
+            group for group in groups]
+
     access_info = collections.namedtuple("AccessInfo", (
         "access_group", "child_group", "parents_group", "member", "until",
         "spots", "via", "depletes", "dos", "deauthorizes", "depletion_bound",
         "implied_groups"))
 
     @staticmethod
-    def depletion_bound(count, parent, depletes, db):
-        if not depletes:
-            return count
-        minimum = count
-        while parent is not None:
+    def depletion_bound(db, initial, depletes=True, count=None):
+        minimum, parent = count, initial
+        while parent is not None and depletes:
+            depletes = db.queryone(
+                "SELECT depletes FROM invitations WHERE inviter=?", (parent,))
             # FK implies unpackable
-            count, parent = db.queryone(
-                "SELECT invitees, depletes FROM invitations "
+            parent, count = db.queryone(
+                "SELECT parents_group, spots FROM user_groups "
                 "WHERE uuid=?", (parent,))
             if count is not None:
                 minimum = count if minimum is None else min(count, minimum)
@@ -287,14 +305,7 @@ class AccessRoot:
     def user_groups(self, user=None, groups=None, db=None):
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
-        if groups is None:
-            info = db.queryall(
-                self.group_query + "user_groups.member=?", (user,), True)
-        else:
-            info = db.queryall(
-                self.group_query + "user_groups.member=? AND "
-                "user_groups.access_group IN (" + ", ".join(
-                    ("?",) * len(groups)) + ")", (user,) + tuple(groups), True)
+        info = self.group_query(user, () if groups is none else groups)
         access_names = {} if len(info) == 0 else dict(db.queryall(
             "SELECT uuid, group_name FROM access_groups WHERE uuid IN (" +
             ", ".join(("?",) * len(info)) + ")",
@@ -311,7 +322,7 @@ class AccessRoot:
                     [i[0] for i in access])
                 subgroups += access
             results.append(option + (self.depletion_bound(
-                option.spots, option.via, option.depletes, db), subgroups))
+                db, option.via, option.depletes, option.spots), subgroups))
         if close:
             db.close()
         return [self.access_info(*option) for option in results]
@@ -330,12 +341,10 @@ class AccessRoot:
         for group in group_names:
             stack[group[0]] = access_stack(db, group, ("group_name",))
         uniq = set(sum([i[0] for i in stack.values()], []))
-        info = db.queryall(
-            self.group_query + "user_groups.access_group IN (" + ", ".join(
-                ("?",) * len(uniq)) + ")", tuple(uniq), True)
+        info = self.group_query(access_groups=uniq)
         results = [self.access_info(
             *option, self.depletion_bound(
-                option.spots, option.via, option.depletes, db),
+                db, option.via, option.depletes, option.spots),
             stack[option.access_group]) for option in info]
         if close:
             db.close()
@@ -369,7 +378,7 @@ class AccessRoot:
             "access_expiration": {None, int},
             "invitees": {None, int},
             "plus": {None, int},
-            "auth": str, # via or users_group if added not from invite
+            "inviter": str,
             "depletes": bool,
             "dos": {None, int},
             "deauthorizes": {0, 1, 2},
@@ -433,24 +442,25 @@ class AccessRoot:
         for invite, last in reversed(tuple(zip(payload.invitations, first))):
             # user accepted via
             # user has access to group through via (limitations.active = 1)
-            limits = db.queryone(
-                "SELECT via, until, spots, depletes, dos, deauthorizes, "
-                "users_group FROM limitations LEFT JOIN user_groups "
-                "ON users_group=child_group WHERE access_group=? AND "
-                "(via=? OR users_group=?) AND member=? AND active=1 AND "
+            users_group = db.queryone(
+                "SELECT parent_group, until, spots FROM user_groups WHERE "
+                "uuid=? AND access_group=? AND member=? AND active=1 AND "
                 "(until IS NULL or until>unixepoch())",
-                (invite.access_group, invite.auth, invite.auth, user), True)
-            if limits is None:
+                (invite.inviter, invite.access_group, user), True)
+            if users_group is None:
                 db.close()
                 flask.abort(401, description="invalid source")
+            limits = db.queryone(
+                "SELECT depletes, dos, deauthorizes, FROM invitations"
+                "WHERE inviter=?", (invite.access_group), True)
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
             #     (limited by access_limit)
-            if limits.until is not None and (
+            if users_group.until is not None and (
                     invite.acceptance_expiration is None or
-                    invite.acceptance_expiration > limits.until or
+                    invite.acceptance_expiration > users_group.until or
                     invite.access_expiration is None or
-                    invite.access_expiration > limits.until):
+                    invite.access_expiration > users_group.until):
                 db.close()
                 flask.abort(400, description="unauthorized timing")
             if invite.acceptance_expiration is not None and \
@@ -467,14 +477,15 @@ class AccessRoot:
                 flask.abort(400, description="invalid timing")
             # invitees is less than or equal to depletion bound
             bound = self.depletion_bound(
-                limits.spots, limits.via, limits.depletes, db)
+                db, users_group.spots, users_group.parent_group,
+                limits.depletes)
             if bound is not None and (
                     invite.invitees is None or invite.invitees > bound):
                 db.close()
                 flask.abort(400, description="too many invitees")
             # plus < spots
-            if limits.spots is not None and (
-                    invite.plus is None or invite.plus >= limits.spots):
+            if users_group.spots is not None and (
+                    invite.plus is None or invite.plus >= users_group.spots):
                 db.close()
                 flask.abort(400, description="too many plus ones")
             # 0 < dos < limits.dos
@@ -494,23 +505,23 @@ class AccessRoot:
             redirect = payload.redirect if last else None
             implied = (-1 if payload.confirm else 0) if next_uuid is None else 1
             current_uuid, next_uuid = uuid.uuid4(), current_uuid
+            # TODO: seems silly to have an access limit == until if not depletes
+            #       but it also seems silly to tie depletes to access_limit
             values.append(invite + (
-                limits.until, implied, redirect, current_uuid,
+                users_group.until, implied, redirect, current_uuid,
                 None if last else next_uuid))
-        # TODO: auth, payload.depletes is bool
+        inserting = (
+            "acceptance_expiration", "access_expiration", "invitees", "plus",
+            "inviter", "depletes", "dos", "deauthorizes")
         db.executemany(
-            "INSERT INTO invitations(" +
-            ", ".join(payload.invitations[0]._fields) +
+            "INSERT INTO invitations(" + ", ".join(inserting) +
             ", access_limit, implied, redirect, uuid, implies) VALUES (" +
             ", ".join(("?",) * (len(payload.invitations[0]) + 5)) +
             ")", values)
         db.commit().close()
         return current_uuid
 
-    removal_args = [{
-            "invitation": str,
-            "member": str,
-        }]
+    removal_args = [str]
 
     @access_lobby.route("/revoke", methods=["POST"])
     def revoke(self):
@@ -518,51 +529,50 @@ class AccessRoot:
         payload = json_payload(flask.request.body, self.removal_args)
         db = self.db().begin()
         access_groups = dict(db.queryall(
-            "SELECT uuid, access_group FROM invitations WHERE uuid IN (" +
+            "SELECT uuid, access_group FROM user_groups WHERE uuid IN (" +
             ", ".join(("?",) * len(payload)) + ")",
-            [revoking.invitation for revoking in payload]))
+            [revoking for revoking in payload]))
         for revoking in payload:
-            access_group = access_groups.get(revoking.invitation)
+            access_group = access_groups.get(revoking)
+            # also ensures privledges query is not empty
             if access_group is None:
                 flask.abort(400)
-            stack = filter(None, access_stack(db, access_group[0]))
+            stack = filter(None, access_stack(db, access_group))
             privledges = db.queryone(
-                "SELECT MAX(deauthorizes) FROM limitations " +
-                "LEFT JOIN user_groups ON users_group=child_group " +
-                "WHERE active=1 AND (until IS NULL or until>unixepoch()) AND" +
-                "member=? AND access_group IN (" +
-                ", ".join(("?",) * len(stack)) + ")", [user] + stack)
+                "SELECT deauthorizes FROM invitations " +
+                "RIGHT JOIN user_groups ON parents_group=inviter " +
+                "WHERE user_groups.active=1 AND member=? AND "
+                "(until IS NULL or until>unixepoch()) AND " +
+                "access_group IN (" + ", ".join(("?",) * len(stack)) +
+                ") ORDER BY deauthorizes DESC NULLS FIRST LIMIT 1",
+                [user] + stack)
             if privledges is None or privledges[0] == 0:
                 db.close()
                 flask.abort(401)
             if privledges[0] == 1:
-                users_group = db.queryone(
-                    "SELECT users_group FROM limitations WHERE member=? AND "
-                    "via=?", (revoking.member, revoking.invitation))
-                if users_group is None:
-                    db.close()
-                    flask.abort(401)
-                child, parent = isdescendant(db, user, users_group[0])
+                # walk stack to check if user has any ancestor groups from
+                # user_group with privledges to deauthorize
+                # though under the current setup, there should only be one
+                # instance of user along any path from root
+                child, parent = isdescendant(db, user, revoking)
                 while parent:
                     access = db.queryone(
-                        "SELECT deauthorizes FROM limitations "
-                        "WHERE users_group=?", (child,))
+                        "SELECT deauthorizes FROM invitations "
+                        "WHERE inviter=?", (parent,))
                     if access is not None and access[0] == 1:
                         break
                     child, parent = isdescendant(db, user, parent)
                 if not child:
                     db.close()
                     flask.abort(401)
-        db.executemany(
-            "UPDATE limitations SET active=0 FROM user_groups "
-            "WHERE users_group=child_group AND via=? AND member=?",
-            [(revoking.invitation, revoking.member) for revoking in payload])
+        db.executemany("UPDATE user_groups SET active=0 WHERE uuid=?", payload)
         db.execute().close()
 
     deauth_info = collections.namedtuple("Deauthable", (
-        "member", "invite", "access_group", "group_name"))
+        "member", "user_group", "invite", "access_group"))
 
-    # returns member, access_group, group_name, invite
+    # returns member, user_group, access_group, group_name
+    # TODO: check for active, add user auth info (name specifically)
     def deauthable(self, user, db=None):
         db = db or self.db().begin()
         groups = self.user_groups(user, db=db)
@@ -570,33 +580,26 @@ class AccessRoot:
         for group in groups:
             permissions[group.deauthorizes].append(group)
         # permissions[1] access_group, group_name (descendants all in implied)
-        # member, access_group, child_group
+        # member, access_group, uuid
         childrens_groups = descendants(db, [
             group.child_group for group in permissions[1]])
-        # users_group, invite
-        childrens_invites = [] if len(childrens_groups) == 0 else db.queryall(
-            "SELECT users_group, via FROM limitations WHERE active=1 AND "
-            "(until IS NULL or until>unixepoch()) AND users_group IN (" +
-            ", ".join(("?",) * len(childrens_groups)) + ")",
-            [group.child_group for group in childrens_groups], True)
         # permissions[2] access_group, group_name
         implied = set() if len(permissions[2]) == 0 else set(
             i[0] for group in permissions[2] for i in group.implied_groups)
-        # member, invite, access_group
+        # member, uuid, access_group
         subgroupers = [] if len(implied) == 0 else db.queryall(
-            "SELECT member, via, access_group FROM user_groups LEFT JOIN "
-            "limitations ON child_group=users_group WHERE access_group IN (" +
+            "SELECT member, uuid, access_group FROM user_groups "
+            "WHERE access_group IN (" +
             ", ".join(("?",) * len(implied)) + ")", list(implied))
         # python joins because of recursive queries
-        childrens_invites = dict(childrens_invites)
-        child_names = [(
-            group.member, childrens_invites[group.child_group],
-            group.access_group) for group in childrens_groups]
+        child_names = [
+            (group.member, group.child_group, group.access_group)
+            for group in childrens_groups]
         match = [
             [dict(share.implied_groups) for share in level]
             for level in permissions[1:]]
         results = [[self.deauth_info(
-            share.member, share.via, share.access_group,
+            share.member, share.child_group, share.access_group,
             share.implied_groups[0][1]) for share in permissions[0]]]
         for group_names, user_groups in zip(match, (child_names, subgroupers)):
             results.append([
@@ -636,6 +639,7 @@ class AccessGroup:
             "SELECT parent_group, uuid FROM access_groups WHERE group_name=?",
             (self.qualname,), True)
         uniq = str(uuid.uuid4()) if access is None else access.uuid
+        # TODO: what if owner gets updated?
         if access is None or access.parent_group != parent:
             # update if the access_group structure has changed
             db.execute(
@@ -660,9 +664,6 @@ class AccessGroup:
                     "INSERT INTO "
                     "user_groups(child_group, member, access_group) "
                     "VALUES (?, ?, ?)", (users_group, owner, self.uuid))
-                db.execute(
-                    "INSERT INTO limitations(users_group, deauthorizes) VALUES "
-                    "(?, 2)", (users_group,))
         else:
             self.uuid = access.uuid
         db.commit().close()
