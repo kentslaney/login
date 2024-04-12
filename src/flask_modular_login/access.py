@@ -275,7 +275,7 @@ class AccessRoot:
             #"CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END AS " +
             "deauthorizes FROM user_groups " +
             "LEFT JOIN invitations ON inviter=parents_group WHERE " +
-            "(invitations.active IS NULL OR invitations.active=1) AND " +
+            "user_groups.active=1 AND " +
             "(until IS NULL or until>unixepoch()) AND " +
             " AND ".join(member_query[0] + access_groups_query[0]),
             member_query[1] + access_groups_query[1], True)
@@ -603,8 +603,8 @@ class AccessRoot:
             i[0] for group in permissions[2] for i in group.implied_groups)
         # member, uuid, access_group
         subgroupers = [] if len(implied) == 0 else db.queryall(
-            "SELECT member, uuid, access_group FROM user_groups "
-            "WHERE access_group IN (" +
+            "SELECT member, uuid, access_group FROM user_groups " +
+            "WHERE user_groups.active=1 AND access_group IN (" +
             ", ".join(("?",) * len(implied)) + ")", list(implied), True)
         members = set(
             share.member for share in
