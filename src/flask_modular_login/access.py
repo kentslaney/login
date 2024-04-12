@@ -254,7 +254,7 @@ class AccessRoot:
             "INSERT INTO user_groups(uuid, parents_group, member, "
             "access_group, until, spots) VALUES (?, ?, ?, ?, ?, ?)", (
                 creating, info.inviter, user, user_group.access_group, until,
-                info.invitees - 1))
+                info.plus))
         dos = info.dos and (info.dos - 1)
         if info.implies is not None:
             return self.accept(info.implies, db, True)
