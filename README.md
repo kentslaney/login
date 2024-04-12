@@ -167,6 +167,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
+- base 58 UUIDs
 - rewrite README
 - it'd be nice to make the invite limitations separated and composable
 - consistent indentation between if statements and others

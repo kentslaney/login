@@ -582,10 +582,9 @@ class AccessRoot:
         db.execute().close()
 
     deauth_info = collections.namedtuple("Deauthable", (
-        "member", "user_group", "invite", "access_group"))
+        "member", "display_name", "user_group", "access_group", "group_name"))
 
     # returns member, user_group, access_group, group_name
-    # TODO: check for active, add user auth info (name specifically)
     def deauthable(self, user, db=None):
         db = db or self.db().begin()
         groups = self.user_groups(user, db=db)
@@ -603,21 +602,29 @@ class AccessRoot:
         subgroupers = [] if len(implied) == 0 else db.queryall(
             "SELECT member, uuid, access_group FROM user_groups "
             "WHERE access_group IN (" +
-            ", ".join(("?",) * len(implied)) + ")", list(implied))
+            ", ".join(("?",) * len(implied)) + ")", list(implied), True)
+        members = set(
+            share.member for share in
+            subgroupers + childrens_groups + permissions[0])
+        display_names = dict(db.queryall(
+            "SELECT uuid, display_name FROM auths WHERE uuid IN (" +
+            ", ".join(("?",) * len(members)) + ")", tuple(members)))
         # python joins because of recursive queries
-        child_names = [
-            (group.member, group.child_group, group.access_group)
-            for group in childrens_groups]
         match = [
             dict(sum([share.implied_groups for share in level], []))
             for level in permissions[1:]]
-        results = [[self.deauth_info(
-            share.member, share.child_group, share.access_group,
-            share.implied_groups[0][1]) for share in permissions[0]]]
-        for group_names, user_groups in zip(match, (child_names, subgroupers)):
+        results = [[
+            self.deauth_info(
+                share.member, display_names[share.member], share.child_group,
+                share.access_group, share.implied_groups[0][1])
+            for share in permissions[0]]]
+        for group_names, user_group in zip(match, (
+                childrens_groups, subgroupers)):
             results.append([
-                self.deauth_info(*share, group_names[share[2]])
-                for share in user_groups])
+                self.deauth_info(
+                    share.member, display_names[share.member], share.uuid,
+                    share.access_group, group_names[share.access_group])
+                for share in user_group])
         return results
 
     @access_lobby.template_json("/remove", "remove.html")
