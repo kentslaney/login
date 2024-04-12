@@ -462,10 +462,11 @@ class AccessRoot:
                 flask.abort(401, description="invalid source")
             if users_group.parents_group is None:
                 limits = collections.namedtuple("limits", (
-                    "depletes", "dos", "deauthorizes"))(False, None, 2)
+                    "depletes", "dos", "deauthorizes", "plus"))(
+                        False, None, 2, None)
             else:
                 limits = db.queryone(
-                    "SELECT depletes, dos, deauthorizes FROM invitations"
+                    "SELECT depletes, dos, deauthorizes, plus FROM invitations "
                     "WHERE inviter=?", (users_group.parents_group,), True)
             # acceptance expiration and access expiration are before until
             #     (negative values for access expiration are after acceptance)
@@ -498,9 +499,8 @@ class AccessRoot:
                     invite.invitees is None or invite.invitees > bound):
                 db.close()
                 flask.abort(400, description="too many invitees")
-            # plus < spots
-            if users_group.spots is not None and (
-                    invite.plus is None or invite.plus >= users_group.spots):
+            if limits.spots is not None and (
+                    invite.plus is None or invite.plus > limits.plus):
                 db.close()
                 flask.abort(400, description="too many plus ones")
             # 0 < dos < limits.dos
