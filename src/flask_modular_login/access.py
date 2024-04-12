@@ -182,7 +182,7 @@ class AccessRoot:
         user = self.authorize()
         db = db or self.db().begin()
         info = db.queryone(
-            "SELECT inviter, acceptance_expiration, access_limit,"
+            "SELECT accessing, inviter, acceptance_expiration, access_limit,"
             "access_expiration, invitees, plus, depletes, dos, deauthorizes, "
             "implies, implied, redirect FROM invitations WHERE active=1 AND "
             "uuid=?", (invite,), True)
@@ -206,7 +206,7 @@ class AccessRoot:
             flask.abort(401)
         # can't accept the same invite twice
         user_group = db.queryone(
-            "SELECT parents_group, member, access_group, spots "
+            "SELECT parents_group, member, spots "
             "FROM user_groups WHERE uuid=?", (info.inviter,), True)
         if user_group.member == user:
             db.close()
@@ -253,7 +253,7 @@ class AccessRoot:
         db.execute(
             "INSERT INTO user_groups(uuid, parents_group, member, "
             "access_group, until, spots) VALUES (?, ?, ?, ?, ?, ?)", (
-                creating, info.inviter, user, user_group.access_group, until,
+                creating, info.inviter, user, info.accessing, until,
                 info.plus))
         dos = info.dos and (info.dos - 1)
         if info.implies is not None:
@@ -376,7 +376,7 @@ class AccessRoot:
         "redirect": str,
         "confirm": bool,
         "invitations": [{
-            "access_group": str,
+            "accessing": str,
             "acceptance_expiration": {None, int},
             "access_expiration": {None, int},
             "invitees": {None, int},
@@ -403,7 +403,7 @@ class AccessRoot:
         except ValueError:
             flask.abort(400, description="invalid tz")
         payload["invitations"] = [
-            {"access_group": i, **{
+            {"accessing": i, **{
                 k[:-lenUUID - 1]: form[k] for k in form.keys()
                 if k.endswith(i) and k != i}}
             for i in form.keys() if len(i) == lenUUID and i[-22] == "4"]
@@ -432,8 +432,8 @@ class AccessRoot:
 
     def create(self, payload):
         inserting = (
-            "acceptance_expiration", "access_expiration", "invitees", "plus",
-            "inviter", "depletes", "dos", "deauthorizes")
+            "accessing", "acceptance_expiration", "access_expiration",
+            "invitees", "plus", "inviter", "depletes", "dos", "deauthorizes")
         payload = json_payload(payload, self.creation_args)
         user = self.authorize()
         db = self.db().begin()
@@ -450,7 +450,7 @@ class AccessRoot:
         for invite, last in reversed(tuple(zip(payload.invitations, first))):
             # user accepted via
             # user has access to group through via (limitations.active = 1)
-            stack = tuple(filter(None, access_stack(db, invite.access_group)))
+            stack = tuple(filter(None, access_stack(db, invite.accessing)))
             users_group = db.queryone(
                 "SELECT parents_group, until, spots FROM user_groups WHERE " +
                 "uuid=? AND member=? AND active=1 AND " +
@@ -499,8 +499,8 @@ class AccessRoot:
                     invite.invitees is None or invite.invitees > bound):
                 db.close()
                 flask.abort(400, description="too many invitees")
-            if limits.spots is not None and (
-                    invite.plus is None or invite.plus > limits.plus):
+            if users_group.spots is not None and (
+                    invite.plus is None or invite.plus > users_group.plus):
                 db.close()
                 flask.abort(400, description="too many plus ones")
             # 0 < dos < limits.dos
@@ -609,15 +609,15 @@ class AccessRoot:
             (group.member, group.child_group, group.access_group)
             for group in childrens_groups]
         match = [
-            [dict(share.implied_groups) for share in level]
+            dict(sum([share.implied_groups for share in level], []))
             for level in permissions[1:]]
         results = [[self.deauth_info(
             share.member, share.child_group, share.access_group,
             share.implied_groups[0][1]) for share in permissions[0]]]
         for group_names, user_groups in zip(match, (child_names, subgroupers)):
             results.append([
-                self.deauth_info(*share, names[share[2]])
-                for share, names in zip(user_groups, group_names)])
+                self.deauth_info(*share, group_names[share[2]])
+                for share in user_groups])
         return results
 
     @access_lobby.template_json("/remove", "remove.html")
