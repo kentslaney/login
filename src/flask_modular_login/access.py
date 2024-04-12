@@ -389,7 +389,7 @@ class AccessRoot:
 
     @access_lobby.route("/allow", methods=["POST"])
     def allow(self):
-        return self.create(flask.request.body)
+        return self.create(flask.request.data)
 
     def parse_invite(self, form):
         if not form.get("redirect"):
@@ -533,12 +533,12 @@ class AccessRoot:
         db.commit().close()
         return current_uuid
 
-    removal_args = [str]
+    removal_args = [str] # user_group UUIDs
 
     @access_lobby.route("/revoke", methods=["POST"])
     def revoke(self):
         user = self.authorize()
-        payload = json_payload(flask.request.body, self.removal_args)
+        payload = json_payload(flask.request.data, self.removal_args)
         db = self.db().begin()
         access_groups = dict(db.queryall(
             "SELECT uuid, access_group FROM user_groups WHERE uuid IN (" +
@@ -549,7 +549,7 @@ class AccessRoot:
             # also ensures privledges query is not empty
             if access_group is None:
                 flask.abort(400)
-            stack = filter(None, access_stack(db, access_group))
+            stack = tuple(filter(None, access_stack(db, access_group)))
             privledges = db.queryone(
                 "SELECT deauthorizes FROM invitations " +
                 "RIGHT JOIN user_groups ON parents_group=inviter " +
@@ -557,7 +557,7 @@ class AccessRoot:
                 "(until IS NULL or until>unixepoch()) AND " +
                 "access_group IN (" + ", ".join(("?",) * len(stack)) +
                 ") ORDER BY deauthorizes DESC NULLS FIRST LIMIT 1",
-                [user] + stack)
+                (user,) + stack)
             if privledges is None or privledges[0] == 0:
                 db.close()
                 flask.abort(401)
@@ -578,8 +578,11 @@ class AccessRoot:
                     db.close()
                     flask.abort(401)
             # no need to check privledges for deauthorizes in (2, None)
-        db.executemany("UPDATE user_groups SET active=0 WHERE uuid=?", payload)
-        db.execute().close()
+        db.executemany(
+            "UPDATE user_groups SET active=0 WHERE uuid=?",
+            [(uuid,) for uuid in payload])
+        db.commit().close()
+        return flask.request.data
 
     deauth_info = collections.namedtuple("Deauthable", (
         "member", "display_name", "user_group", "access_group", "group_name"))
