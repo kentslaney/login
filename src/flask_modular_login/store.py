@@ -229,7 +229,7 @@ class HeadlessDB:
         terms = tuple(filter(None, sum((
             sum(([j, ","] for j in i.split(",")), [])[:-1]
             for i in words[1:]), [])))
-        terms = iter(zip(reversed(map(bool, range(len(terms)))), terms))
+        terms = iter(zip(reversed(tuple(map(bool, range(len(terms))))), terms))
         for conts, word in terms:
             start = ord('a') <= ord(word[0]) <= ord('z')
             containing = any(i in word for i in "()*'\"- ")

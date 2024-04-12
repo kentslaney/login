@@ -38,9 +38,10 @@ CREATE TABLE access_groups (
 	uuid TEXT NOT NULL,
 	group_name TEXT,
 	parent_group TEXT,
-	PRIMARY KEY(group_name),
+	PRIMARY KEY(uuid),
 	FOREIGN KEY(parent_group) REFERENCES access_groups(uuid)
 );
+CREATE UNIQUE INDEX access_names ON access_groups(group_name);
 CREATE TABLE user_groups (
 	uuid TEXT NOT NULL,
 	parents_group TEXT,

@@ -64,10 +64,10 @@ in the longer one if the first unmatched character is a separator
                     value=0 />
             </li>
             <li>
-                <span>auth</span>:
-                <pre><span>"{{group.via or group.child_group}}"</span></pre>
-                <input type="hidden" name="auth-{{implied[0]}}"
-                    value="{{group.via or group.child_group}}" />
+                <span>inviter</span>:
+                <pre><span>"{{group.child_group}}"</span></pre>
+                <input type="hidden" name="inviter-{{implied[0]}}"
+                    value="{{group.child_group}}" />
             </li>
             <li>
                 <label for="depletes-chk-{{implied[0]}}">
@@ -107,7 +107,8 @@ in the longer one if the first unmatched character is a separator
         </label>
         <input type="checkbox" name="confirm" id="confirm-chk" />
         <br>
-        <input type="submit" value="submit" />
+        <input type="submit" value="submit"
+            {{ 'disabled' if groups|count == 0 else '' }} />
     </div>
 </form>
 <style>
