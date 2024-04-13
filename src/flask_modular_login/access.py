@@ -82,7 +82,7 @@ def isdescendant(db, user, parents_group):
 # templates with sets are considered enums, and value must be in that set
 # other than a nested set, sets can contain all the other kinds of templates
 # otherwise, the type of the value must match the type given in template
-def json_payload(value, template):
+def data_payload(value, template, parsed=True):
     def oxford_comma(terms):
         return " and ".join(terms) if len(terms) < 3 else \
             ", ".join(terms[:-1]) + ", and " + terms[-1]
@@ -130,10 +130,13 @@ def json_payload(value, template):
         else:
             return payload
 
-    try:
-        payload = json.loads(value)
-    except json.decoder.JSONDecodeError:
-        flask.abort(400, description="invalid JSON")
+    if parsed:
+        payload = value
+    else:
+        try:
+            payload = json.loads(value)
+        except json.decoder.JSONDecodeError:
+            flask.abort(415, description="invalid JSON")
     try:
         return ensure(payload, template)
     except Exception as e:
@@ -389,7 +392,7 @@ class AccessRoot:
 
     @access_lobby.route("/allow", methods=["POST"])
     def allow(self):
-        return self.create(flask.request.data)
+        return self.create(flask.request.json)
 
     def parse_invite(self, form):
         if not form.get("redirect"):
@@ -428,13 +431,13 @@ class AccessRoot:
                         else json.loads(group[num])
                 except ValueError:
                     flask.abort(400, description=f"invalid {num}")
-        return self.create(json.dumps(payload))
+        return self.create(payload)
 
     def create(self, payload):
         inserting = (
             "accessing", "acceptance_expiration", "access_expiration",
             "invitees", "plus", "inviter", "depletes", "dos", "deauthorizes")
-        payload = json_payload(payload, self.creation_args)
+        payload = data_payload(payload, self.creation_args, True)
         user = self.authorize()
         db = self.db().begin()
         if len(payload.invitations) == 0:
@@ -538,7 +541,7 @@ class AccessRoot:
     @access_lobby.route("/revoke", methods=["POST"])
     def revoke(self):
         user = self.authorize()
-        payload = json_payload(flask.request.data, self.removal_args)
+        payload = data_payload(flask.request.json, self.removal_args, True)
         db = self.db().begin()
         access_groups = dict(db.queryall(
             "SELECT uuid, access_group FROM user_groups WHERE uuid IN (" +
@@ -637,7 +640,6 @@ class AccessRoot:
 
     # TODO: confirm acceptence page (for implies == -1)
     # TODO: deauthorization page
-    # TODO: module interface based access
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):
