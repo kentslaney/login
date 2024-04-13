@@ -178,7 +178,15 @@ class AccessRoot:
 
     @access_lobby.route("/accept/<invite>")
     def confirm(self, invite):
-        return flask.render_template("confirm.html", invite=invite)
+        implied = self.db().queryone(
+            "SELECT implied FROM invitations WHERE uuid=?", (invite,))
+        if implied is None or implied[0] == 1:
+            flask.abort(404)
+        url = flask.url_for(
+            "modular_login.modular_login_access.accept", invite=invite)
+        if implied[0] == 0:
+            return flask.redirect(url)
+        return flask.render_template("confirm.html", invite=invite, url=url)
 
     @access_lobby.route("/add/<invite>")
     def accept(self, invite, db=None, implied=False):
@@ -540,8 +548,12 @@ class AccessRoot:
 
     @access_lobby.route("/revoke", methods=["POST"])
     def revoke(self):
+        self.kick(flask.request.json)
+        return flask.request.data
+
+    def kick(self, payload):
         user = self.authorize()
-        payload = data_payload(flask.request.json, self.removal_args, True)
+        payload = data_payload(payload, self.removal_args, True)
         db = self.db().begin()
         access_groups = dict(db.queryall(
             "SELECT uuid, access_group FROM user_groups WHERE uuid IN (" +
@@ -585,7 +597,6 @@ class AccessRoot:
             "UPDATE user_groups SET active=0 WHERE uuid=?",
             [(uuid,) for uuid in payload])
         db.commit().close()
-        return flask.request.data
 
     deauth_info = collections.namedtuple("Deauthable", (
         "member", "display_name", "user_group", "access_group", "group_name"))
@@ -634,12 +645,15 @@ class AccessRoot:
         return results
 
     @access_lobby.template_json("/remove", "remove.html")
+    @access_lobby.route("/view/remove", methods=["POST"])
     def remove(self):
-        user = self.authorize()
-        return {"removable": self.deauthable(user)}
-
-    # TODO: confirm acceptence page (for implies == -1)
-    # TODO: deauthorization page
+        if flask.request.method == "GET":
+            user = self.authorize()
+            return {"removable": self.deauthable(user)}
+        else:
+            removing = list(flask.request.form.keys())
+            self.kick(removing)
+            return json.dumps(removing)
 
 class AccessGroup:
     def __init__(self, name, info, stack=None):

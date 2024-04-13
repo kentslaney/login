@@ -1,3 +1,47 @@
 <html>
-    {{ removable }}
+    <form method="POST">
+    {% for remove in (removable[1] + removable[2])|sort(
+            attribute="display_name,group_name") %}
+        <div class="option">
+            <input type="checkbox" name="{{ remove.user_group }}"
+                id="{{ remove.user_group }}" />
+            <label for="{{ remove.user_group }}">
+                remove {{ remove.display_name }} from {{ remove.group_name }}
+            </label>
+            <li class="action" data-for="{{ remove.user_group }}">
+                remove user {{ remove.member }}
+                owner of user group {{ remove.user_group }}
+                from access group {{ remove.access_group }}
+            </li>
+        </div>
+    {% endfor %}
+    Queued actions:
+    <ul id="effects"></ul>
+    <input type="submit" value="submit" id="submit" />
+    </form>
+<style>
+#effects > .action:not(.active) { display: none; }
+</style>
+<script type="text/javascript">
+window.addEventListener("load", e => {
+    let container = document.getElementById("effects")
+    let actions = Array.prototype.slice.call(
+        document.getElementsByClassName("action"))
+    let submit = document.getElementById("submit")
+    submit.disabled = true
+    for (let el of actions) {
+        const chk = document.getElementById(el.getAttribute("data-for"))
+        el.parentElement.removeChild(el)
+        container.appendChild(el)
+        const f = ((chk, el) => () => {
+            if (chk.checked) el.classList.add("active")
+            else el.classList.remove("active")
+            submit.disabled = document.getElementsByClassName(
+                "active").length == 0
+        })(chk, el)
+        f()
+        chk.addEventListener("change", f)
+    }
+})
+</script>
 </html>
