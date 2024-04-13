@@ -4,7 +4,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from login import authorized
-from store import RouteLobby
+from store import RouteLobby, CompressedUUID
 
 end_locals()
 
@@ -178,6 +178,8 @@ class AccessRoot:
 
     @access_lobby.route("/accept/<invite>")
     def confirm(self, invite):
+        if CompressedUUID.possible(invite):
+            invite = CompressedUUID.toUUID(invite)
         implied = self.db().queryone(
             "SELECT implied FROM invitations WHERE uuid=?", (invite,))
         if implied is None or implied[0] == 1:
@@ -542,7 +544,9 @@ class AccessRoot:
             ", ".join(("?",) * (len(inserting) + 5)) +
             ")", values)
         db.commit().close()
-        return current_uuid
+        return {
+            "long": current_uuid,
+            "short": CompressedUUID.fromUUID(current_uuid)}
 
     removal_args = [str] # user_group UUIDs
 

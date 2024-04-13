@@ -368,3 +368,52 @@ def secret_key(paths = key_paths):
         f.write(secret)
     return secret
 
+import math
+
+class CompressedUUID:
+    compressed = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    base16 = "0123456789abcdef"
+    # [i for i, j in enumerate(str(uuid.uuid4())) if j == '-']
+    dashes = [8, 13, 18, 23]
+
+class CompressedUUID(CompressedUUID):
+    length = math.ceil(math.log(16 ** 32) / math.log(
+        len(CompressedUUID.compressed)))
+
+    @staticmethod
+    def rebase(value, inbase, outbase):
+        output = []
+        for remainder in value:
+            for digit in range(len(output)):
+                remainder = inbase * output[digit] + remainder
+                output[digit] = remainder % outbase
+                remainder = remainder // outbase
+            while remainder:
+                output.append(remainder % outbase)
+                remainder = remainder // outbase
+        return output[::-1]
+
+    @classmethod
+    def translate(cls, value, inalphabet, outalphabet):
+        rebased = cls.rebase(map(lambda x: inalphabet.index(x), value),
+            len(inalphabet), len(outalphabet))
+        return "".join(map(lambda x: outalphabet[x], rebased))
+
+    @classmethod
+    def fromUUID(cls, strUUID):
+        b16str = strUUID.replace('-', '')
+        small = cls.translate(b16str, cls.base16, cls.compressed)
+        return small.rjust(cls.length, cls.compressed[0])
+
+    @classmethod
+    def toUUID(cls, short):
+        b16str = cls.translate(short, cls.compressed, cls.base16)
+        for i in cls.dashes:
+            b16str = b16str[:i] + "-" + b16str[i:]
+        return b16str
+
+    @classmethod
+    def possible(cls, unknown):
+        return len(unknown) == cls.length and all(
+            i in cls.compressed for i in unknown)
+
