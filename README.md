@@ -167,7 +167,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- invite link QR codes, with a /qr link to switch devices after login
 - group __and__ __or__ __xor__ __invert__ __contains__
 - group add_user, remove_user, etc
 - linked accounts

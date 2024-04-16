@@ -35,6 +35,7 @@ def get_next():
 def store_next(stored):
     flask.session["next"] = json.dumps(stored)
 
+# TODO: customizable fallback URL ("/" right now)
 @oauth_before_login.connect
 def before_login(blueprint, url):
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url)[4])["state"][0]

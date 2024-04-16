@@ -20,6 +20,12 @@ in the longer one if the first unmatched character is a separator
             </label>
         </li>
         <ul>
+            <li>
+                <span>invitees</span>: &le;
+                <span class="invitee-bound"><!--
+                    -->{{ group.depletion_bound or "null" }}<!--
+                --></span>
+            </li>
             <li class="before">
                 <span>acceptance_expiration</span>: &le;
                 <span class="date">{{ group.until or "null" }}</span>
@@ -52,12 +58,6 @@ in the longer one if the first unmatched character is a separator
                 </ul>
             </li>
             <li class="bounded-num">
-                <span>invitees</span>:
-                &le; <span>{{group.depletion_bound or "null" }}</span>
-                <input type="number" name="invitees-{{implied[0]}}" min=0
-                    value=1 />
-            </li>
-            <li class="bounded-num">
                 <span>plus</span>:
                 &lt; <span>{{group.depletion_bound or "null"}}</span>
                 <input type="number" name="plus-{{implied[0]}}" min=0
@@ -82,7 +82,7 @@ in the longer one if the first unmatched character is a separator
             </li>
             <li class="bounded-num">
                 <span>dos</span>:
-                &lt; <span>{{group.dos or "null"}}</span>
+                &le; <span>{{group.dos - 1 if group.dos else "null"}}</span>
                 <input type="number" name="dos-{{implied[0]}}" min=1
                     value=1 />
             </li>
@@ -98,6 +98,11 @@ in the longer one if the first unmatched character is a separator
     {% endfor %}
     </ul>
     <div>
+        <span>
+            invitees: &le; <span id="current-bound">null</span>
+            <input type="number" name="invitees" min=0 value=1 />
+        </span>
+        <br>
         <input type="hidden" id="tz" name="tz" />
         <span>redirect</span>:
         <input type="text" name="redirect" value="/" required />
@@ -178,6 +183,28 @@ window.addEventListener("load", () => {
         }
     }
     document.getElementById('tz').value = (new Date()).getTimezoneOffset();
+
+    const sel_query = ".group > input[type=checkbox]:first-child"
+    const selections = document.querySelectorAll(sel_query)
+    const output = document.getElementById("current-bound")
+    const user_value = output.parentElement.querySelector("input")
+    const f = () => {
+        const limits = document.querySelectorAll(
+            sel_query + ":checked ~ * .invitee-bound")
+        const vals = Array.prototype.map.call(
+            limits, el => JSON.parse(el.innerText)).filter(x => x !== null)
+        if (vals.length === 0) {
+            output.innerText = "null"
+            user_value.max = undefined
+        } else {
+            const bound = Math.min(...vals);
+            output.innerText = bound
+            user_value.max = bound
+        }
+    }
+    for (const sel of selections) {
+        sel.addEventListener("change", f)
+    }
 })
 </script>
 </html>

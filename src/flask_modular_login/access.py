@@ -1,4 +1,4 @@
-import flask, uuid, collections, urllib.parse, time, json, datetime
+import flask, uuid, collections, urllib.parse, time, json, datetime, qrcode, io
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -47,6 +47,7 @@ class AccessRoot:
         self.redirect, self.db = redirect, db
         self.bp = flask.Blueprint(
             "modular_login_access", __name__, url_prefix="/access")
+        self.qual = "modular_login.modular_login_access"
         self.bp.record(lambda setup_state: self.register(setup_state.app))
         access_lobby.register_lobby(self.bp, self)
 
@@ -70,22 +71,93 @@ class AccessRoot:
             flask.abort(401)
         return flask.session["user"]
 
-    @access_lobby.route("/accept/<invite>")
-    def confirm(self, invite):
+    def bounce(self):
+        if not authorized():
+            return flask.redirect(flask.url_for(
+                "modular_login.login", next=flask.request.url))
+        return None
+
+    def confirm(self, invite, url, **kw):
         if CompressedUUID.possible(invite):
             invite = CompressedUUID.toUUID(invite)
         implied = self.db().queryone(
             "SELECT implied FROM invitations WHERE uuid=?", (invite,))
         if implied is None or implied[0] == 1:
             flask.abort(404)
-        url = flask.url_for(
-            "modular_login.modular_login_access.accept", invite=invite)
         if implied[0] == 0:
             return flask.redirect(url)
-        return flask.render_template("confirm.html", invite=invite, url=url)
+        return flask.render_template(
+            "confirm.html", invite=invite, url=url, **kw)
+
+    @access_lobby.route("/accept/<invite>")
+    def accept(self, invite):
+        auth = self.bounce()
+        if auth is not None:
+            return auth
+        return self.confirm(
+            invite, flask.url_for(f"{self.qual}.add", invite=invite))
 
     @access_lobby.route("/add/<invite>")
-    def accept(self, invite, db=None, implied=False):
+    def add(self, invite):
+        auth = self.bounce()
+        if auth is not None:
+            return auth
+        res = self.validate(invite)
+        if not isinstance(res, str):
+            return res
+        return flask.redirect(res)
+
+    @access_lobby.route("/qr")
+    def qr_handoff(self):
+        auth = self.bounce()
+        if auth is not None:
+            return auth
+        url = self.db().queryone(
+            "SELECT redirect FROM invitations RIGHT JOIN user_groups "
+            "ON parents_group=inviter WHERE redirect IS NOT NULL AND member=? "
+            "ORDER BY user_groups.rowid DESC LIMIT 1", (flask.session["user"],))
+        if url is None:
+            flask.abort(404)
+        return flask.redirect(url[0])
+
+    @access_lobby.route("/qr/accept/<invite>")
+    def qr_landing(self, invite):
+        auth = self.bounce()
+        if auth is not None:
+            return auth
+        return self.confirm(invite, qr=True, url=flask.url_for(
+            f"{self.qual}.qr_add", invite=invite))
+
+    @access_lobby.route("/qr/add/<invite>")
+    def qr_add(self, invite):
+        auth = self.bounce()
+        if auth is not None:
+            return auth
+        res = self.validate(invite)
+        if not isinstance(res, str):
+            return res
+        # TODO: add way to specify shortlink
+        return flask.render_template("qr.html", url=res, handoff=flask.url_for(
+            f"{self.qual}.qr_handoff", _external=True))
+
+    @access_lobby.route("/qr/img/<invite>")
+    def qr_img(self, invite):
+        value = flask.url_for(
+            f"{self.qual}.qr_landing", invite=invite, _external=True)
+        output = io.BytesIO()
+        qrcode.make(value).save(output)
+        return flask.Response(output.getvalue(), mimetype='image/png')
+
+    def preview(self, invite, info):
+        short = CompressedUUID.fromUUID(invite)
+        return flask.Response(flask.render_template(
+            "preview.html", spots=info.invitees, url=flask.url_for(
+                f"{self.qual}.accept", invite=short, _external=True),
+            qr=flask.url_for(f"{self.qual}.qr_img", invite=short),
+            next=flask.url_for(
+                f"{self.qual}.qr_landing", invite=short, _external=True)))
+
+    def validate(self, invite, db=None, implied=False):
         user = self.authorize()
         db = db or self.db().begin()
         info = db.queryone(
@@ -117,8 +189,8 @@ class AccessRoot:
             "FROM user_groups WHERE uuid=?", (info.inviter,), True)
         if user_group.member == user:
             db.close()
-            return f"invite working, {user_group.spots} left"
-        # can't accept your own invite
+            return self.preview(invite, info)
+        # no user_group loops
         child = info.inviter
         while child is not None:
             parent = db.queryone(
@@ -164,9 +236,9 @@ class AccessRoot:
                 info.plus))
         dos = info.dos and (info.dos - 1)
         if info.implies is not None:
-            return self.accept(info.implies, db, True)
+            return self.validate(info.implies, db, True)
         db.commit().close()
-        return flask.redirect(info.redirect)
+        return info.redirect
 
     @staticmethod
     # selecting columns needed to know what invites selected can create
@@ -280,13 +352,13 @@ class AccessRoot:
             return self.parse_invite(flask.request.form)
 
     creation_args = {
+        "invitees": {None, int},
         "redirect": str,
         "confirm": bool,
         "invitations": [{
             "accessing": str,
             "acceptance_expiration": {None, int},
             "access_expiration": {None, int},
-            "invitees": {None, int},
             "plus": {None, int},
             "inviter": str,
             "depletes": bool,
@@ -296,19 +368,24 @@ class AccessRoot:
 
     @access_lobby.route("/allow", methods=["POST"])
     def allow(self):
-        return self.create(flask.request.json)
+        return json.dumps(self.create(flask.request.json))
 
     def parse_invite(self, form):
         if not form.get("redirect"):
             flask.abort(400, description="missing redirect")
         payload = {
             "redirect": form.get("redirect"), "confirm": "confirm" in form,
-            "invitations": []}
+            "invitees": form.get("invitees"), "invitations": []}
         try:
             tz = datetime.timezone(
                 -datetime.timedelta(minutes=int(form.get("tz", 0))))
         except ValueError:
             flask.abort(400, description="invalid tz")
+        if form["invitees"] is not None:
+            try:
+                payload["invitees"] = int(payload["invitees"])
+            except ValueError:
+                flask.abort(400, description="invalid invitees")
         payload["invitations"] = [
             {"accessing": i, **{
                 k[:-lenUUID - 1]: form[k] for k in form.keys()
@@ -329,18 +406,20 @@ class AccessRoot:
                     "expiration-type", "").startswith("relative") and relative:
                 group["access_expiration"] = -int(float(relative) * 86400)
             group['depletes'] = 'depletes' in group
-            for num in ("invitees", "plus", "dos", "deauthorizes"):
+            for num in ("plus", "dos", "deauthorizes"):
                 try:
                     group[num] = None if group.get(num) in (None, '') \
                         else json.loads(group[num])
                 except ValueError:
                     flask.abort(400, description=f"invalid {num}")
-        return self.create(payload)
+        return flask.redirect(flask.url_for(
+            f"{self.qual}.add",
+            invite=self.create(payload)["long"]))
 
     def create(self, payload):
         inserting = (
-            "accessing", "acceptance_expiration", "access_expiration",
-            "invitees", "plus", "inviter", "depletes", "dos", "deauthorizes")
+            "accessing", "acceptance_expiration", "access_expiration", "plus",
+            "inviter", "depletes", "dos", "deauthorizes")
         payload = data_payload(payload, self.creation_args, True)
         user = self.authorize()
         db = self.db().begin()
@@ -351,8 +430,7 @@ class AccessRoot:
             db.close()
             flask.abort(400, description="bad redirect")
         values, first = [], (i == 0 for i in range(len(payload.invitations)))
-        initial_uuid = current_uuid = str(uuid.uuid4())
-        next_uuid = None
+        current_uuid, next_uuid = None, None
         now = time.time()
         for invite, last in reversed(tuple(zip(payload.invitations, first))):
             # user accepted via
@@ -403,7 +481,7 @@ class AccessRoot:
                 db, users_group.parents_group, limits.depletes,
                 users_group.spots)
             if bound is not None and (
-                    invite.invitees is None or invite.invitees > bound):
+                    payload.invitees is None or payload.invitees > bound):
                 db.close()
                 flask.abort(400, description="too many invitees")
             if users_group.spots is not None and (
@@ -424,19 +502,18 @@ class AccessRoot:
             if not invite.depletes and limits.depletes:
                 db.close()
                 flask.abort(401, description="must deplete")
-            redirect = payload.redirect if last else None
-            implied = (-1 if payload.confirm else 0) if next_uuid is None else 1
             current_uuid, next_uuid = str(uuid.uuid4()), current_uuid
+            implied = (-1 if payload.confirm else 0) if last else 1
+            redirect = payload.redirect if next_uuid is None else None
             # TODO: seems silly to have an access limit == until if not depletes
             #       but it also seems silly to tie depletes to access_limit
             values.append(tuple(getattr(invite, i) for i in inserting) + (
-                users_group.until, implied, redirect, current_uuid,
-                None if last else next_uuid))
+                payload.invitees, users_group.until, implied, redirect,
+                current_uuid, next_uuid))
         db.executemany(
             "INSERT INTO invitations(" + ", ".join(inserting) +
-            ", access_limit, implied, redirect, uuid, implies) VALUES (" +
-            ", ".join(("?",) * (len(inserting) + 5)) +
-            ")", values)
+            ", invitees, access_limit, implied, redirect, uuid, implies) " +
+            "VALUES (" + ", ".join(("?",) * (len(inserting) + 6)) + ")", values)
         db.commit().close()
         return {
             "long": current_uuid,

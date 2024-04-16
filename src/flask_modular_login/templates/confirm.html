@@ -4,6 +4,12 @@
     sign up before then granting you access. If you are logged in, make sure you
     are using the account you want to give privledges to, as some invite links
     have a limit to the number of accounts that can use them.
+    {% if qr %}
+    <br><br>
+    Since you accessed this page from a QR code, presumably from a mobile
+    device, you will be given a chance to hand off the session to a different
+    browser after you log in.
+    {% endif %}
     <br><br>
     <a href="{{ url }}">accept access invite {{ invite }}</a>
 </html>

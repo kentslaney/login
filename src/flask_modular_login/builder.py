@@ -41,9 +41,8 @@ class LoginBuilder:
         flask.g.__setattr__(self.g_attr, value)
 
     def bounce(self, redirect=None, group=None):
-        # repeated in AccessRoot
         if group is not None:
-            # TODO: request access page
+            # TODO: request access page? from who?
             flask.abort(403)
         if flask.request.method == "GET":
             return flask.redirect(
