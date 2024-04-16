@@ -167,18 +167,21 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- rewrite README
+- invite link QR codes, with a /qr link to switch devices after login
+- group __and__ __or__ __xor__ __invert__ __contains__
+- group add_user, remove_user, etc
+- linked accounts
+- RemoteLoginBuilder needs to implement access group creation/adding users/etc
+    - would distribution at the DB level make more sense?
+- check path interface consitency (pub/sub, memcached, secret_key)
+- what happens with multiple login_optional/login_required in a row?
+- fresh_login_required?
 - it'd be nice to make the invite limitations separated and composable
 - consistent indentation between if statements and others
-- pub/sub deauthenticated tokens for forwarded ports
-- pub/sub group access queries
-- invite link QR codes, with a /qr link to switch devices after login
-- better HTML interfaces/more informative errors/request access pages
-- use ajax requests for HTML interface
-- linked accounts
+- pub/sub JSON and group access queries
 - purge access tokens from remote clients after they're stale
-- custom login BP (for the sake of public MVPs) (and data privacy geeks)
-- invite option to limit sharing by total use time
+- custom login BP (for the sake of public MVPs)
+- invite option to limit sharing by total use time?
 - include `X-API-Version` header to enable easier upgrades
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - flask-dance implementation for apple OAuth
@@ -186,8 +189,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 [Reference implementation](
 https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
 - consider sql alchemy
-- restructure README to allow quickest start possible (package w/ test first)
-    - will that obscure the reason to use this repo?
+- rewrite/restructure README to allow quickest start possible
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - type hints would be helpful
 - check SQL indicies

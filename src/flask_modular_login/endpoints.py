@@ -5,7 +5,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from interface import OAuthBlueprint
 from login import authorized
-from store import RouteLobby
+from utils import RouteLobby
 
 end_locals()
 

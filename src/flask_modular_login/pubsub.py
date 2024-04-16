@@ -1,4 +1,6 @@
-import flask, os.path, time, requests, websockets, json, asyncio, urllib
+import (
+    flask, os.path, time, requests, websockets, json, asyncio, urllib,
+    multiprocessing)
 from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -8,8 +10,9 @@ from cryptography.hazmat.backends import (
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import project_path, RouteLobby, secret_key
+from utils import project_path, RouteLobby, secret_key
 from login import refresh_access
+from group import ismember
 
 end_locals()
 
@@ -137,13 +140,18 @@ class Handshake:
 
 server_lobby = RouteLobby()
 
+# TODO: unix_path for server
 class ServerBP(Handshake):
-    def __init__(self, db, root_path=None):
+    def __init__(self, db, *a, **kw, root_path=None):
         super().__init__(root_path)
-        self.db = db
+        self.db, self.a, self.kw = db, a, kw
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
         server_lobby.register_lobby(self.bp, self)
         self.keypair()
+
+    def forkWS(self):
+        ws = ServerWS(self.db, *self.a, root_path=self.root_path, **self.kw)
+        multiprocessing.Process(target=ws.run, daemon=True).start()
 
     @server_lobby.route("/syn", methods=["POST"])
     def syn(self):
@@ -174,8 +182,9 @@ class ServerBP(Handshake):
         asyncio.run(self.send_deauthorize(revoked_time, access, refresh_time))
 
 class ServerWS(Handshake):
-    def __init__(self, db, cache=None, root_path=None,
-                 access_timeout=3600*24, refresh_timeout=3600*24*90):
+    def __init__(
+            self, db, cache=None, access_timeout=3600*24,
+            refresh_timeout=3600*24*90, *, root_path=None):
         super().__init__(root_path)
         self.db, self.cache, self.secondaries = db, cache, set()
         self.access_timeout = access_timeout
@@ -211,6 +220,10 @@ class ServerWS(Handshake):
 
         return json.dumps([access, refresh_time])
 
+    def access_query(self, user, access_group):
+        db = self.db.begin()
+        return json.dumps(ismember(db, user, access_group))
+
     def broadcast(self, message):
         self.accept(message)
         websockets.broadcast(self.secondaries, message)
@@ -244,13 +257,13 @@ class ServerWS(Handshake):
         asyncio.run(self.main())
 
 class ClientWS(Handshake):
+    # TODO: json based messages
+
     # TODO: maybe timeout after long silence and reconnect when a request hits
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
-    # TODO: need one instance per thread, maybe use multiprocessing to fork
-    # TODO: update unix_path to have one socket per thread
     # TODO: access queries
 
-    def __init__(self, base_url, db, cache=None, root_path=None):
+    def __init__(self, base_url, db, cache=None, *, root_path=None):
         super.__init__(root_path)
         self.db, self.cache = db, cache
         self.url = lambda path, query=None: base_url + "/ws" + path + (
@@ -310,14 +323,25 @@ class ClientWS(Handshake):
                     server = wss.recv()
                 client = wsc.recv()
 
-    def deauthorize(self, revoked_time, access, refresh_time):
-        asyncio.run(self.send_deauthorize(revoked_time, access, refresh_time))
+    def run(self):
+        asyncio.run(self.listen)
 
 class ClientBP(Handshake):
+    def __init__(self, *a, **kw, root_path=None):
+        super().__init__(root_path)
+        self.a, self.kw = a, kw
+
     async def reload_access(self, refresh):
         async with websockets.unix_connect(self.unix_path) as websocket:
             return json.loads(await websocket.send(refresh))
 
     def refresh(self, refresh):
         return asyncio.run(self.reload_access(refresh))
+
+    def forkWS(self):
+        ws = ClientWS(*self.a, root_path=self.root_path, **self.kw)
+        multiprocessing.Process(target=ws.run, daemon=True).start()
+
+class RemoteLoginBuilder:
+    ...
 

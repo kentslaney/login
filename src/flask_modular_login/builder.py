@@ -5,7 +5,7 @@ import flask
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import secret_key
+from utils import secret_key
 from login import authorized
 from access import AccessGroup
 from interface import OAuthBlueprint
