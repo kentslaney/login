@@ -220,10 +220,19 @@ class OpShell:
         return self if self._op_on is None else self._op_on
 
     def __contains__(self, user):
+        return self.generic("__contains__")(user)
+
+    def __getattr__(self, name):
+        return self.generic(name)
+
+    def generic(self, f, *a, **kw):
         if self._op is None:
-            assert self._on.__class__.__contains__ != __class__.__contains__
-            return user in self._on
-        return self._op(user, *self._op_args)
+            assert getattr(self._on.__class__, f, None) != getattr(__class__, f, None)
+        def wrapper(*a, **kw):
+            if self._op is None:
+                return getattr(self._on, f)(*a, **kw)
+            return self._op(f, *self._op_args, *a, **kw)
+        return functools.wraps(f)(wrapper)
 
     def __pos__(self):
         return abs(self) if self._op is None else self
@@ -234,8 +243,8 @@ class OpShell:
     def __abs__(self):
         return __class__(self, self._op, *self._op_args)
 
-    def _and(self, user, other):
-        return user in self._on and user in other
+    def _and(self, f, other, *a, **kw):
+        return getattr(self._on, f)(*a, **kw) and getattr(other, f)(*a, **kw)
 
     def __and__(self, other):
         return __class__(self, self._and, other)
@@ -245,8 +254,8 @@ class OpShell:
         this._op, this._op_args = (-this)._and, (other,)
         return this
 
-    def _or(self, user, other):
-        return user in self._on or user in other
+    def _or(self, f, other, *a, **kw):
+        return getattr(self._on, f)(*a, **kw) or getattr(other, f)(*a, **kw)
 
     def __or__(self, other):
         return __class__(self, self._or, other)
@@ -256,8 +265,9 @@ class OpShell:
         this._op, this._op_args = (-this)._or, (other,)
         return this
 
-    def _xor(self, user, other):
-            return bool((user in self._on) ^ (user in other))
+    def _xor(self, f, other, *a, **kw):
+        return bool(
+            getattr(self._on, f)(*a, **kw) ^ getattr(other, f)(*a, **kw))
 
     def __xor__(self, other):
         return __class__(self, self._xor, other)
@@ -267,8 +277,8 @@ class OpShell:
         this._op, this._op_args = (-this)._xor, (other,)
         return this
 
-    def _invert(self, user):
-        return not user in self._on
+    def _invert(self, *a, **kw):
+        return not getattr(self._on, f)(*a, **kw)
 
     def __invert__(self):
         return __class__(self, self._invert)
@@ -289,6 +299,15 @@ class OpShellTest(OpShell):
     def __contains__(self, value):
         return self.lo <= value <= self.hi
 
+    def test(self, x):
+        return x not in self
+
     def __repr__(self):
         return f"{self.lo} to {self.hi}"
+
+# a = OpShellTest(2, 3) & OpShellTest(3, 4)
+# b = OpShellTest(2, 3) | OpShellTest(3, 4)
+# c = OpShellTest(7, 8)
+# d = c
+# d |= a
 
