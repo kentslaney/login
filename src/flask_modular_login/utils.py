@@ -212,7 +212,8 @@ class OpShell:
             "_xor": lambda x, a: f"({x} XOR {a[0]})",
             "_invert": lambda x, a: f"NOT {x}",
         }
-        self.symbols = {getattr(__class__, k): v for k, v in symbols.items()}
+        self._op_symbols = {
+            getattr(__class__, k): v for k, v in symbols.items()}
 
     @property
     def _on(self):
@@ -275,7 +276,7 @@ class OpShell:
     def __repr__(self):
         if self._op is None:
             return super().__repr__() if self._on is self else repr(self._on)
-        return self.symbols[self._op.__func__](self._on, self._op_args)
+        return self._op_symbols[self._op.__func__](self._on, self._op_args)
 
 class OpShell(OpShell):
     def __init__(self):
