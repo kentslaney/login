@@ -207,10 +207,10 @@ class OpShell:
         self._op_on, self._op, self._op_args = this, op, a
 
         symbols = {
-            "_and": lambda x, a: f"({x} AND {a[0]})",
-            "_or": lambda x, a: f"({x} OR {a[0]})",
-            "_xor": lambda x, a: f"({x} XOR {a[0]})",
-            "_invert": lambda x, a: f"NOT {x}",
+            "_and": lambda l, r: f"({l} AND {r})",
+            "_or": lambda l, r: f"({l} OR {r})",
+            "_xor": lambda l, r: f"({l} XOR {r})",
+            "_invert": lambda x: f"NOT {x}",
         }
         self._op_symbols = {
             getattr(__class__, k): v for k, v in symbols.items()}
@@ -276,9 +276,19 @@ class OpShell:
     def __repr__(self):
         if self._op is None:
             return super().__repr__() if self._on is self else repr(self._on)
-        return self._op_symbols[self._op.__func__](self._on, self._op_args)
+        return self._op_symbols[self._op.__func__](self._on, *self._op_args)
 
 class OpShell(OpShell):
     def __init__(self):
         pass
+
+class OpShellTest(OpShell):
+    def __init__(self, lo, hi):
+        self.lo, self.hi = lo, hi
+
+    def __contains__(self, value):
+        return self.lo <= value <= self.hi
+
+    def __repr__(self):
+        return f"{self.lo} to {self.hi}"
 
