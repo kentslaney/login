@@ -200,3 +200,84 @@ def data_payload(value, template, parsed=True):
         # raise e
         flask.abort(400, description=e.args[0])
 
+class OpShell:
+    _op_on, _op, _op_args = None, None, ()
+
+    def __init__(self, this=None, op=None, *a):
+        self._op_on, self._op, self._op_args = this, op, a
+
+        symbols = {
+            "_and": lambda x, a: f"({x} AND {a[0]})",
+            "_or": lambda x, a: f"({x} OR {a[0]})",
+            "_xor": lambda x, a: f"({x} XOR {a[0]})",
+            "_invert": lambda x, a: f"NOT {x}",
+        }
+        self.symbols = {getattr(__class__, k): v for k, v in symbols.items()}
+
+    @property
+    def _on(self):
+        return self if self._op_on is None else self._op_on
+
+    def __contains__(self, user):
+        if self._op is None:
+            assert self._on.__class__.__contains__ != __class__.__contains__
+            return user in self._on
+        return self._op(user, *self._op_args)
+
+    def __pos__(self):
+        return abs(self) if self._op is None else self
+
+    def __neg__(self):
+        return self if self._op is None else abs(self)
+
+    def __abs__(self):
+        return __class__(self, self._op, *self._op_args)
+
+    def _and(self, user, other):
+        return user in self._on and user in other
+
+    def __and__(self, other):
+        return __class__(self, self._and, other)
+
+    def __iand__(self, other):
+        this = +self
+        this._op, this._op_args = (-this)._and, (other,)
+        return this
+
+    def _or(self, user, other):
+        return user in self._on or user in other
+
+    def __or__(self, other):
+        return __class__(self, self._or, other)
+
+    def __ior__(self, other):
+        this = +self
+        this._op, this._op_args = (-this)._or, (other,)
+        return this
+
+    def _xor(self, user, other):
+            return bool((user in self._on) ^ (user in other))
+
+    def __xor__(self, other):
+        return __class__(self, self._xor, other)
+
+    def __ixor__(self, other):
+        this = +self
+        this._op, this._op_args = (-this)._xor, (other,)
+        return this
+
+    def _invert(self, user):
+        return not user in self._on
+
+    def __invert__(self):
+        return __class__(self, self._invert)
+
+    def __repr__(self):
+        if self._op is None:
+            return super().__repr__() if self._on is self else repr(self._on)
+        return self.symbols[self._op.__func__](self._on, self._op_args)
+
+class OpShell(OpShell):
+    def __init__(self):
+        pass
+

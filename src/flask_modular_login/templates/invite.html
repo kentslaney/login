@@ -99,7 +99,7 @@ in the longer one if the first unmatched character is a separator
     </ul>
     <div>
         <span>
-            invitees: &le; <span id="current-bound">null</span>
+            invitees: &le; <span id="current-bound"></span>
             <input type="number" name="invitees" min=0 value=1 />
         </span>
         <br>
@@ -188,9 +188,11 @@ window.addEventListener("load", () => {
     const selections = document.querySelectorAll(sel_query)
     const output = document.getElementById("current-bound")
     const user_value = output.parentElement.querySelector("input")
+    const submit_button = document.querySelector("input[type=submit]")
     const f = () => {
         const limits = document.querySelectorAll(
             sel_query + ":checked ~ * .invitee-bound")
+        submit_button.disabled = limits.length == 0
         const vals = Array.prototype.map.call(
             limits, el => JSON.parse(el.innerText)).filter(x => x !== null)
         if (vals.length === 0) {
@@ -205,6 +207,7 @@ window.addEventListener("load", () => {
     for (const sel of selections) {
         sel.addEventListener("change", f)
     }
+    f()
 })
 </script>
 </html>

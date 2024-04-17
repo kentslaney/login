@@ -14,6 +14,7 @@ class TestBP(MonoBlueprint):
         super().__init__("test", __name__)
         self.route("/test")(self.debug_only(login))
         self.route("/test/as")(self.debug_only(self.test_auth_as))
+        self.route("/test/failure")(self.debug_only(failure))
 
     def debug_only(self, f):
         @wraps(f)
@@ -36,6 +37,9 @@ def login():
     url = flask.url_for("test.test_auth_as", **url)
     return flask.render_template(
         "test.html", ip=flask.request.remote_addr, next=url)
+
+def failure():
+    raise RuntimeError()
 
 test_whois = lambda: flask.request.args.get("who", "")
 test_pic = "https://github.githubassets.com/assets/GitHub-Mark-ea2971cee799.png"

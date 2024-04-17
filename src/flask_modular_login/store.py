@@ -193,6 +193,7 @@ class HeadlessDB:
         if db is not None:
             for con in db.values():
                 con.close()
+            self._g._auth_database = {}
 
     # Has limited reliability, but accuracy is per query so use it if it works.
     # If correctness becomes an issue, SQL syntax is a well specified state

@@ -67,9 +67,13 @@ class OAuthBlueprint(flask.Blueprint):
 
     def _oauth_db(self, app=None):
         app = app or flask.current_app
-        return FKDatabase(
-            app, os.path.join(self._oauth_run_root, "users.db"),
-            relpath("schema.sql"), debug=app.debug)
+        db_path = os.path.join(self._oauth_run_root, "users.db")
+        if app:
+            return FKDatabase(
+                app, db_path, relpath("schema.sql"), debug=app.debug)
+        else:
+            return HeadlessDB(
+                db_path, relpath("schema.sql"), FKDatabase.default_sql)
 
     def _oauth_register(self, app):
         self._oauth_apps.append(app)

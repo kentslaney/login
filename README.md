@@ -167,7 +167,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- group __and__ __or__ __xor__ __invert__ __contains__
+- AccessGroup OpShell for decorator on vet
 - group add_user, remove_user, etc
 - linked accounts
 - RemoteLoginBuilder needs to implement access group creation/adding users/etc

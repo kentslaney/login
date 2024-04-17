@@ -1,5 +1,12 @@
 import collections
 
+import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
+    lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
+
+from utils import OpShell
+
+end_locals()
+
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 
 # returns stack of access groups going upwards from init
@@ -39,7 +46,7 @@ def ismember(db, user, group):
             else:
                 return (superset, permission[0])
 
-class AccessGroup:
+class AccessGroup(OpShell):
     def __init__(self, name, info, stack=None):
         self.info = info
         assert info.sep not in name
@@ -53,6 +60,9 @@ class AccessGroup:
     @property
     def qualname(self):
         return self.info.sep.join(i.name for i in self.stack)
+
+    def __repr__(self):
+        return self.qualname
 
     def register(self, app):
         db = self.info.db(app).ctx.begin()
@@ -95,7 +105,7 @@ class AccessGroup:
                     "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
         db.commit().close()
 
-    def contains(self, app, user):
+    def shallow(self, app, user):
         db = self.info.db(app).begin()
         res = ismember(db, user, [self.uuid])
         db.close()
@@ -107,4 +117,7 @@ class AccessGroup:
         res = ismember(db, user, tuple(reversed([i.uuid for i in self.stack])))
         db.close()
         return res
+
+    def __contains__(self, user):
+        return bool(self.vet(None, user))
 

@@ -505,8 +505,7 @@ class AccessRoot:
             current_uuid, next_uuid = str(uuid.uuid4()), current_uuid
             implied = (-1 if payload.confirm else 0) if last else 1
             redirect = payload.redirect if next_uuid is None else None
-            # TODO: seems silly to have an access limit == until if not depletes
-            #       but it also seems silly to tie depletes to access_limit
+            # TODO: what about "try for 3 days" spreadable invites
             values.append(tuple(getattr(invite, i) for i in inserting) + (
                 payload.invitees, users_group.until, implied, redirect,
                 current_uuid, next_uuid))
