@@ -167,6 +167,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
+- option to auto-redirect to QR code link when logging in not to /qr url
 - group add_user, remove_user, etc
 - linked accounts
 - RemoteLoginBuilder needs to implement access group creation/adding users/etc
@@ -188,6 +189,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
 - consider sql alchemy
 - rewrite/restructure README to allow quickest start possible
+- guide for transitioning from existing setup?
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - type hints would be helpful
 - check SQL indicies
