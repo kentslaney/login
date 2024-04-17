@@ -42,7 +42,7 @@ class LoginBuilder:
 
     def bounce(self, redirect=None, group=None):
         if group is not None:
-            # TODO: request access page? from who?
+            # TODO: request access page? from whom?
             flask.abort(403)
         if flask.request.method == "GET":
             return flask.redirect(

@@ -1,38 +1,38 @@
 <html>
 <head>
-	<title>Active sessions</title>
+    <title>Active sessions</title>
 </head>
 <body>
-	{% for session in active %}
-		<div>
-			<a target="_blank" href="https://ip.me/ip/{{ session['ip'] }}">
-				{{ session['ip'] }}
-			</a>
-			last seen at {{ session['authtime'] }}.
-			{% if session['current'] %}
-				<a href="/login/logout">Logout</a> (current session)
-			{% else %}
-				<a class="deauthorize" token="{{ session['token'] }}" href="#">
-					Deauthorize session
-				</a>
-			{% endif %}
-		</div>
-	{% endfor %}
-	<script type="text/javascript">
-		links = document.body.getElementsByClassName("deauthorize");
-		for (var i = 0; i < links.length; i++) {
-			links[i].onclick = function(e) {
-				var xhr = new XMLHttpRequest(), row = this.parentElement;
-				var remote = "/login/deauthorize/" + this.getAttribute("token");
-				xhr.open("POST", remote, true);
-				xhr.onreadystatechange = function() {
-					if (this.readyState == 4)
-						row.parentElement.removeChild(row);
-				}
-				xhr.send();
-			}
-		}
-	</script>
+    {% for session in active %}
+        <div>
+            <a target="_blank" href="https://ip.me/ip/{{ session['ip'] }}">
+                {{ session['ip'] }}
+            </a>
+            last seen at {{ session['authtime'] }}.
+            {% if session['current'] %}
+                <a href="/login/logout">Logout</a> (current session)
+            {% else %}
+                <a class="deauthorize" token="{{ session['token'] }}" href="#">
+                    Deauthorize session
+                </a>
+            {% endif %}
+        </div>
+    {% endfor %}
+    <script type="text/javascript">
+        links = document.body.getElementsByClassName("deauthorize");
+        for (var i = 0; i < links.length; i++) {
+            links[i].onclick = function(e) {
+                var xhr = new XMLHttpRequest(), row = this.parentElement;
+                var remote = "/login/deauthorize/" + this.getAttribute("token");
+                xhr.open("POST", remote, true);
+                xhr.onreadystatechange = function() {
+                    if (this.readyState == 4)
+                        row.parentElement.removeChild(row);
+                }
+                xhr.send();
+            }
+        }
+    </script>
 </body>
 </html>
 
