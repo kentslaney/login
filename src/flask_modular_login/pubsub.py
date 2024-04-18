@@ -207,7 +207,6 @@ class Handshake:
 
 server_lobby = RouteLobby()
 
-# TODO: unix_path for server, offload Handshake.sync to WS thread
 class ServerBP(Handshake):
     def __init__(self, db, *a, **kw, root_path=None):
         super().__init__(root_path)
@@ -250,9 +249,10 @@ class ServerBP(Handshake):
 
 class ServerWS(Handshake):
     def __init__(
-            self, db, cache=None, access_timeout=3600*24,
+            self, db, host, port, cache=None, access_timeout=3600*24,
             refresh_timeout=3600*24*90, *, root_path=None):
         super().__init__(root_path)
+        self.host, self.port = host, port
         self.db, self.cache, self.secondaries = db, cache, set()
         self.access_timeout = access_timeout
         self.refresh_timeout = refresh_timeout
@@ -305,26 +305,29 @@ class ServerWS(Handshake):
         async for message in ws:
             self.relay(message)
 
+    def handler(self, message):
+        return self.refresh(message)
+
     async def secondary(self, ws, init):
         self.server_timer(init)
         self.secondaries.add(ws)
         try:
             async for message in ws.recv():
-                refresh_token = self.refresh(self.server_recieve(message))
+                refresh_token = self.handler(self.server_recieve(message))
                 await ws.send(self.server_send(refresh_token))
         finally:
             self.secondaries.remove(ws)
 
-    async def handler(self, ws):
+    async def router(self, ws):
         message = ws.recv()
         if len(message) == 0x28: # OTP length
             await self.secondary(ws, message)
         else:
             await self.remote_primary(ws, message)
 
-    # TODO: unix_path
     async def main(self):
-        async with websockets.serve(self.handler, self.host, self.port):
+        async with websockets.serve(self.router, self.host, self.port), \
+                websockets.unix_serve(self.local_primary, self.unix_path):
             await asyncio.Future()
 
     def run(self):
@@ -337,9 +340,9 @@ class ClientWS(Handshake):
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
     # TODO: access queries
 
-    def __init__(self, base_url, db, cache=None, *, root_path=None):
+    def __init__(self, db, base_url, uri, cache=None, *, root_path=None):
         super.__init__(root_path)
-        self.db, self.cache = db, cache
+        self.uri, self.db, self.cache = uri, db, cache
         self.url = lambda path, query=None: base_url + "/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
         self.load_public()
@@ -370,28 +373,39 @@ class ClientWS(Handshake):
         data = json.dumps(reply)
         self.refresh_access(message, *data)
 
+    def router(self, message):
+        return self.revoke(message)
+
     async def listen(self):
-        async with websockets.connect(self.uri) as wsr, websockets.unix_serve(
-                self.handler, self.unix_path) as wsl:
+        q = asyncio.Queue()
+        async def handler(ws):
+            e = asyncio.Event()
+            async for message in ws.recv():
+                local.put((ws, message, e))
+                await e.wait()
+
+        async with websockets.connect(self.uri) as notify, \
+                websockets.connect(self.uri) as query, \
+                websockets.unix_serve(handler, self.unix_path):
             wsr.send(self.otp())
-            remote, local = wsr.recv(), wsl.recv()
             asyncio.to_thread(self.update)
+            remote, local = notify.recv(), q.get()
+
             while True:
-                done, pending = await asyncio.wait([remote, local])
+                done, pending = await asyncio.wait(
+                    [remote, local], return_when=asyncio.FIRST_COMPLETED)
                 done = next(iter(done))
-                if client is done:
-                    self.revoke(json.loads(self.client_recieve(done.result())))
+                if remote is done:
+                    self.router(json.loads(self.client_recieve(done.result())))
+                    remote = notify.recv()
                 else:
-                    pending = next(iter(pending))
-                    pending.cancel()
-                    message = done.result()
-                    await wsr.send(self.client_send(message))
-                    cypher = await wsr.recv()
-                    reply = self.client_recieve(cypher)
-                    await wsl.send(reply)
+                    ws, message, event = done.result()
+                    await query.send(self.client_send(message))
+                    reply = self.client_recieve(await query.recv())
                     asyncio.to_thread(self.io_hook(message, reply))
-                    local = wsl.recv()
-                remote = wsr.recv()
+                    await ws.send(reply)
+                    e.set()
+                    local = q.get()
 
     def run(self):
         asyncio.run(self.listen)
