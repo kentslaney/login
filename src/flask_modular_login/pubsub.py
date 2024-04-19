@@ -154,7 +154,7 @@ class Handshake:
     #     0: 0x48 is OTP
     #  0x48: 0x68 is salted hash signed by shared secret
     #  0x68:0x168 is salted hash signed by private key
-    # 0x168:      is AES encrypted public key with above (preamble) as nonce
+    # 0x168:      is AES encrypted public key with above as nonce
     def server_sign_otp(self, otp):
         g = self.server_timer(otp)
         g.update(data[0x28:0x48])

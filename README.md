@@ -228,6 +228,13 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
+- replace python recursion with recursive queries
+- make invitation params composible via query builder (sqlalchemy)
+- use distributed DB instead of WS (? aiphttp instead of flask to integrate WS?)
+- switch to python-social-auth for OIDC support
+
+seems like the above scraps most of the existing code base
+
 - pub/sub JSON and group access queries
 - a way to revoke invitations not just permissions
 - make the login service start via construction of class imported from package
@@ -249,10 +256,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 - invite option to limit sharing by total use time?
 - include `X-API-Version` header to enable easier upgrades
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
-- flask-dance implementation for apple OAuth
-([Github issue](https://github.com/singingwolfboy/flask-dance/issues/418),
-[Reference implementation](
-https://github.com/python-social-auth/social-core/blob/master/social_core/backends/apple.py))
+- login.gov integration might be a polite civil service
 - consider sql alchemy
 - rewrite/restructure README to allow quickest start possible
 - guide for transitioning from existing setup?

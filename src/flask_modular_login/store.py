@@ -106,6 +106,62 @@ class AppContext(Passthrough):
         self._transacting = False
         self.parent.app.app_context().__exit__()
 
+def split_out(flat, seps):
+    flat = (flat,) if type(flat) == str else flat
+    for sep in seps:
+        flat = tuple(filter(None, sum((sum((
+            [j, sep] for j in i.split(sep)), [])[:-1] for i in flat), [])))
+    return flat
+
+def seek_layer(iterator, pause, done):
+    parens = 0
+    for i in iterator:
+        if i == "(":
+            parens += 1
+        elif i == ")":
+            parens -= 1
+        elif parens != 0:
+            continue
+        elif i in pause:
+            return True
+        elif i in done:
+            return False
+    assert False, "invalid expression"
+
+def sql_names(query, values, rowid=None):
+    # https://www.sqlite.org/lang_select.html
+    endings = {
+        "from", "where", "group", "having", "window", "order", "limit",
+        "union", "intersect", "except"}
+    # https://www.sqlite.org/syntax/expr.html
+    exprs = {
+        "null", "true", "false", "current_time", "current_date",
+        "current_timestamp", "is", "not", "and", "or", "in", "match",
+        "like", "regexp", "glob", "collate", "isnull", "notnull",
+        "between", "case", "cast", "raise"}
+
+    words = split_out(query.lower().split(), ",()")
+    cols, parens, staggered = [], 0, zip(
+        *((None,) * (3 - i) + words + (None,) * i for i in range(4)))
+    latest, continues = (i for _, _, _, i in staggered), True
+    seek_layer(latest, "", ("select",))
+    if next(latest) in ("distinct", "all"):
+        next(latest)
+    while continues:
+        continues = seek_layer(latest, ",", endings)
+        prev, word, _, _ = next(staggered)
+        assert prev in ("as", ",", "distinct", "latest", "select")
+        assert ord('a') <= ord(word[0]) <= ord('z')
+        assert all(i not in word for i in "()*'\"- ")
+        assert word not in exprs
+        cols.append(word.rsplit(".", 1)[-1])
+
+    assert len(cols) == len(values)
+    assert len(cols) == len(set(cols))
+    obj = collections.namedtuple(
+        "row" + ("" if rowid is None else str(rowid)), cols)
+    return obj(**dict(zip(cols, values)))
+
 class HeadlessDB:
     def __init__(self, database, schema, init=[], debug=False):
         self.database = os.path.abspath(database)
@@ -153,7 +209,7 @@ class HeadlessDB:
         rv = cur.fetchall()
         cur.close()
         if names:
-            return [self.names(query, r) for r in rv]
+            return [sql_names(query, r) for r in rv]
         return rv
 
     def queryone(self, query, args=(), names=False):
@@ -163,7 +219,7 @@ class HeadlessDB:
         row = cur.lastrowid
         cur.close()
         if names and rv:
-            return self.names(query, rv, row)
+            return sql_names(query, rv, row)
         return rv
 
     def execute(self, query, args=()):
@@ -194,64 +250,6 @@ class HeadlessDB:
             for con in db.values():
                 con.close()
             self._g._auth_database = {}
-
-    # Has limited reliability, but accuracy is per query so use it if it works.
-    # If correctness becomes an issue, SQL syntax is a well specified state
-    #     machine which can be parsed if needbe.
-    # Current limitations include aliased expressions.
-    # Should fail if it can't parse the values.
-    @classmethod
-    def names(cls, query, values, rowid=None):
-        # https://www.sqlite.org/lang_select.html
-        endings = {
-            "from", "where", "group", "having", "window", "order", "limit",
-            "union", "intersect", "except"}
-        # https://www.sqlite.org/syntax/expr.html
-        exprs = {
-            "null", "true", "false", "current_time", "current_date",
-            "current_timestamp", "is", "not", "and", "or", "in", "match",
-            "like", "regexp", "glob", "collate", "isnull", "notnull",
-            "between", "case", "cast", "raise"}
-        words = query.lower().split()
-        assert words[0] == "select"
-        assert words[1] not in ("distinct", "all")
-        for i, word in enumerate(words):
-            if word in endings:
-                words = words[:i]
-                break
-
-        names = []
-        # split words out commas
-        terms = tuple(filter(None, sum((
-            sum(([j, ","] for j in i.split(",")), [])[:-1]
-            for i in words[1:]), [])))
-        terms = iter(zip(reversed(tuple(map(bool, range(len(terms))))), terms))
-        for conts, word in terms:
-            start = ord('a') <= ord(word[0]) <= ord('z')
-            containing = any(i in word for i in "()*'\"- ")
-            if not start or containing or word in exprs:
-                conts, word = cls.expr_name(conts, word, terms)
-                assert not conts or word == ","
-                continue
-            names.append(word.rsplit(".", 1)[-1])
-            if not conts:
-                break
-            conts, word = next(terms)
-            if word == "as":
-                conts, names[-1] = next(terms)
-                if not conts:
-                    break
-                conts, word = next(terms)
-            assert word == ","
-        assert len(names) == len(values)
-        assert len(names) == len(set(names))
-        obj = collections.namedtuple(
-            "row" + ("" if rowid is None else str(rowid)), names)
-        return obj(**dict(zip(names, values)))
-
-    @staticmethod
-    def expr_name(conts, word, terms):
-        assert False
 
     def db_init_hook(self):
         pass
