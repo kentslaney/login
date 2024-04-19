@@ -166,18 +166,84 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 -A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
 ```
 
+## Project Structure
+```
++-------------+
+| access root |
++-------------+
+       |      \\_______
+       |       \  \_   \_______
+       |        \   \_         \_______
+       |         \    \_               \_______
+       |          \     \__                    \_______
+       |           \       \                           \
++-------------+     \       +-------------+             +-------------+
+|  oauth BP   |      \      |access group |____________ |local client |
+|  interface  |       \     +-------------+             |  flask app  |
++-------------+        \           |                    +-------------+
+       |      \         \          |                 __/
+       |       \         \         |              __/
+       |        \         \        |           __/
+       |         \         \       |        __/
+       |          \         \      |       /
++-------------+    \        +-------------+
+|  platforms  |     \       |login builder|
++-------------+      \      +-------------+
+       |              \            |       \__
+       |               \           |          \_
+       |                \          |            \_
+       |                 \         |              \_
+       |                  \        |                \__
+       |                   \       |                   \
++-------------+             +-------------+             +-------------+
+|   client    |_____________|  login app  |             |   remote    |
+|  login app  |             +-------------+             |login builder|
++-------------+             /                           +-------------+
+                           /                           /       |
+                          /                           /        |
+                         /                           /         |
+                        /                           /          |
+                       /                           /           |
+                      /     +-------------+       /     +-------------+
+                     /      |local client |      /      |remote client|
+                    /       |   compat    |     /       |     app     |
+                   /        +-------------+    /        +-------------+
+                  /                |          /                |
+                 /                 |         /                 |
+                /                  |        /                  |
+               /                   |       /                   |
+              /                    |      /                    |
++-------------+             +-------------+             +-------------+
+|  server BP  |             |login builder|             |  client BP  |
++-------------+             |  interface  |             +-------------+
+               \__          +-------------+                    |
+                  \_               |                           |
+                    \_             |                           |
+                      \_           |                           |
+                        \__        |                           |
+                           \       |                           |
+                            +-------------+             +-------------+
+                            |  server WS  |-------------|  client WS  |
+                            +-------------+             +-------------+
+```
+
 ## TODOs
+- pub/sub JSON and group access queries
+- a way to revoke invitations not just permissions
+- make the login service start via construction of class imported from package
+- set the platforms via launch conditions and allow extensibility of /login BP
+- need a way to create an AccessGroup object via UUID or group name
+- construct group via UUID or name (optionally pathlib-like with / as sep)
+- lambda based group construction
+- local secondary via WS unix socket to interface with other languages/aiohttp
+- build a use case
 - option to auto-redirect to QR code link when logging in not to /qr url
 - group add_user, remove_user, etc
 - linked accounts
 - RemoteLoginBuilder needs to implement access group creation/adding users/etc
-    - would distribution at the DB level make more sense?
 - check path interface consitency (pub/sub, memcached, secret_key)
 - what happens with multiple login_optional/login_required in a row?
-- fresh_login_required?
-- it'd be nice to make the invite limitations separated and composable
 - consistent indentation between if statements and others
-- pub/sub JSON and group access queries
 - purge access tokens from remote clients after they're stale
 - custom login BP (for the sake of public MVPs)
 - invite option to limit sharing by total use time?
