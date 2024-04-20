@@ -230,7 +230,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ## TODOs
 - replace python recursion with recursive queries
 - make invitation params composible via query builder (sqlalchemy)
-- use distributed DB instead of WS (? aiphttp instead of flask to integrate WS?)
 - switch to python-social-auth for OIDC support
 
 seems like the above scraps most of the existing code base

@@ -154,7 +154,7 @@ def sql_names(query, values, rowid=None):
         assert ord('a') <= ord(word[0]) <= ord('z')
         assert all(i not in word for i in "()*'\"- ")
         assert word not in exprs
-        cols.append(word.rsplit(".", 1)[-1])
+        cols.append(word.rsplit(".", 1)[-1]) # TODO
 
     assert len(cols) == len(values)
     assert len(cols) == len(set(cols))
@@ -170,6 +170,7 @@ class HeadlessDB:
         self._g, self.app = None, type("resource_app", (), {
             "open_resource": open, "app_context": contextlib.contextmanager(
                 lambda: iter([None]))})()
+        self.many = [self.queryone, self.queryall]
 
     def ensure(self):
         if not os.path.exists(self.database):

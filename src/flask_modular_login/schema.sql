@@ -44,7 +44,7 @@ CREATE TABLE access_groups (
 CREATE UNIQUE INDEX access_names ON access_groups(group_name);
 CREATE TABLE user_groups (
     uuid TEXT NOT NULL,
-    parents_group TEXT,
+    parents_group TEXT, -- TODO: parents_group == inviter isn't a unique join
     member TEXT NOT NULL,
     access_group TEXT NOT NULL,
     until INT,

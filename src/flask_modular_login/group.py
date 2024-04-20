@@ -15,36 +15,23 @@ GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 # if extra is empty, init can also be a string
 # if init is a string, the output is flattened
 # the last element will have None as the UUID
-def access_stack(db, init, extra=()):
-    parent = (init,) if isinstance(init, str) else init
-    assert len(extra) + 1 == len(parent)
-    stack, query = [parent], "".join(", " + i for i in extra)
-    while parent[0] is not None:
-        parent = db.queryone(
-            f"SELECT parent_group{query} FROM access_groups WHERE uuid=?",
-            (stack[-1][0],))
-        stack.append(parent)
-    return sum(stack, ()) if isinstance(init, str) else stack
+def access_stack(db, init, query, args=(), many=True):
+    return db.many[many](
+        "WITH RECURSIVE "
+          "supersets(n) AS ("
+            "VALUES(?) "
+            "UNION ALL "
+            "SELECT parent_group FROM access_groups, supersets "
+            "WHERE uuid=supersets.n"
+          f") {query}", (init,) + args, True)
 
 # group can be a root last stack
 # calls db.commit
 def ismember(db, user, group):
-    stack = access_stack(db, group) if isinstance(group, str) else group
-    for superset in reversed(stack):
-        permission = None if superset is None else db.queryone(
-            "SELECT uuid, until FROM user_groups "
-            "WHERE member=? AND access_group=? AND "
-            "active=1 ORDER BY until DESC NULLS FIRST",
-            (user, superset))
-        if permission is not None:
-            if permission[1] is not None and permission[1] < time.time():
-                # deactivate if it's past access expiration
-                db.execute(
-                    "UPDATE user_groups SET active=0 WHERE uuid=?",
-                    (permission[0],))
-                db.commit()
-            else:
-                return (superset, permission[0])
+    return access_stack(
+        db, group, "SELECT uuid, access_group FROM user_groups WHERE "
+        "access_group IN supersets AND member=? AND active=1 AND "
+        "(until IS NULL or until>unixepoch())", (user,), False)
 
 class AccessGroup(OpShell):
     def __init__(self, name, info, stack=None):

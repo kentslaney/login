@@ -61,6 +61,7 @@ def authorized(session_=None):
     if method in methods:
         return methods[method][0].authorized
 
+# this needs to go through login server for remote calls
 def refresh_access(db, access, refresh, refresh_time, access_timeout, cached):
     now = int(time.time())
     if access_timeout and now - refresh_time > access_timeout:

@@ -12,32 +12,32 @@ end_locals()
 lenUUID = len(str(uuid.uuid4()))
 
 # queries is either a str reprsenting a user UUID or a list of `users_group`s
-def descendants(db, queries):
-    results = []
-    children = queries if type(queries) is not str else sum(db.queryall(
-        "SELECT uuid FROM user_groups WHERE member=?", (queries,)), ())
-    children = tuple(filter(None, children))
-    while children:
-        children = db.queryall(
-            "SELECT parents_group, uuid, member, access_group " +
-            "FROM user_groups WHERE parents_group IN (" +
-            ", ".join(("?",) * len(children)) + ")", children, True)
-        results += children
-        children = tuple(filter(None, (child.uuid for child in children)))
-    return results
+def descendants(db, queries, selection=None, many=True):
+    selection = selection or ["parents_group", "uuid", "member", "access_group"]
+    initial, args = ("SELECT uuid FROM user_groups WHERE member=?", (queries,))\
+            if type(queries) is str else \
+            ("VALUES" + ",".join("(?)" * len(queries)), queries)
+    return db.many[many](
+        "WITH RECURSIVE "
+          "descendants(n) AS ("
+            f"{initial} UNION ALL "
+            "SELECT uuid FROM user_groups, descendants "
+            "WHERE parents_group=descendants.n"
+          ") "
+        f"SELECT {','.join(selection)} FROM user_groups "
+        "WHERE uuid IN descendants", args, True)
 
 # checks if a group descends from user, returns None if not
 # otherwise, returns the child and parent group of the user_group for user
-def isdescendant(db, user, parents_group):
-    while parents_group:
-        parent = db.queryone(
-            "SELECT member, parents_group FROM user_groups WHERE uuid=?",
-            (parents_group,), True)
-        if parent is None:
-            return None
-        if parent.member == user:
-            return parents_group, parent.parents_group
-        parents_group = parent.parents_group
+def ancestors(db, initial, selection, args=(), many=True):
+    return db.many[many](
+        "WITH RECURSIVE "
+          "ancestors(n) AS ("
+            "VALUES(?) "
+            "UNION ALL "
+            "SELECT parents_group FROM user_groups, parent "
+            "WHERE uuid=parent.n"
+          f") {selection}", (initial,) + args, True)
 
 access_lobby = RouteLobby()
 
@@ -191,18 +191,17 @@ class AccessRoot:
             db.close()
             return self.preview(invite, info)
         # no user_group loops
-        child = info.inviter
-        while child is not None:
-            parent = db.queryone(
-                "SELECT member, parents_group FROM user_groups "
-                "WHERE uuid=?", (child,), True)
-            if parent is None:
-                break
-            if parent.member == user:
-                db.close()
-                flask.abort(412)
-            child = parent.parents_group
+        if ancestors(
+                db, info.inviter, "SELECT uuid FROM user_groups WHERE "
+                "uuid IN ancestors AND member=?", (user,), False):
+            db.close()
+            flask.abort(412)
         # lower depletions; invites' invitees is not None if depletes
+        #ancestors(
+        #    db, info.inviter, "SELECT user_groups.uuid as uid, member, "
+        #    "spots, invitations.uuid as invite, invitees, depletes FROM "
+        #    "user_groups RIGHT JOIN invitations on parent_group=inviter WHERE "
+        #    "user_groups.uuid IN ancestors")
         lower, depletes = info.inviter, info.depletes
         if depletes:
             count, parent = user_group.spots, user_groups.parent_group
@@ -248,19 +247,16 @@ class AccessRoot:
         access_groups_query = ((), ()) if not access_groups else ((
             "user_groups.access_group IN (" +
             ", ".join(("?",) * len(access_groups)) + ")",), access_groups)
-        groups = db.queryall(
+        return db.queryall(
             "SELECT access_group, user_groups.uuid, parents_group, member, " +
             "until, spots, depletes, dos, " +
-            #"CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END AS " +
+            "CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END AS " +
             "deauthorizes FROM user_groups " +
             "LEFT JOIN invitations ON inviter=parents_group WHERE " +
             "user_groups.active=1 AND " +
             "(until IS NULL or until>unixepoch()) AND " +
             " AND ".join(member_query[0] + access_groups_query[0]),
             member_query[1] + access_groups_query[1], True)
-        return [
-            group._replace(deauthorizes=2) if group.deauthorizes is None else
-            group for group in groups]
 
     access_info = collections.namedtuple("AccessInfo", (
         "access_group", "child_group", "parents_group", "member", "until",
@@ -286,21 +282,18 @@ class AccessRoot:
         user = user or flask.session["user"]
         db, close = db or self.db().begin(), db is None
         info = self.group_query(db, user, () if groups is None else groups)
-        access_names = {} if len(info) == 0 else dict(db.queryall(
-            "SELECT uuid, group_name FROM access_groups WHERE uuid IN (" +
-            ", ".join(("?",) * len(info)) + ")",
-            [option.access_group for option in info]))
         results = []
         for option in info:
-            access = [[option.access_group, access_names[option.access_group]]]
-            subgroups = access
-            while access:
-                access = db.queryall(
-                    "SELECT uuid, group_name FROM access_groups " +
-                    "WHERE parent_group IN (" +
-                    ", ".join(("?",) * len(access)) + ")",
-                    [i[0] for i in access])
-                subgroups += access
+            subgroups = db.queryall(
+                "WITH RECURSIVE "
+                  "subsets(n) AS ("
+                    "VALUES(?) "
+                    "UNION ALL "
+                    "SELECT uuid FROM access_groups, subsets "
+                    "WHERE parent_group=subsets.n"
+                  ") "
+                "SELECT uuid, group_name FROM access_groups "
+                "WHERE uuid IN subsets", (option.access_group,))
             results.append(option + (
                 self.depletion_bound(
                     db, option.parents_group, option.depletes, option.spots),
@@ -313,15 +306,11 @@ class AccessRoot:
     # shouldn't necessarily be viewable
     def group_access(self, groups, db=None):
         db, close = db or self.db().begin(), db is None
-        group_names = db.queryall(
-            "SELECT uuid, group_name FROM access_group WHERE uuid IN (" +
-            ", ".join(("?",) * len(groups)) + ")", groups)
-        if len(group_names) != len(groups):
-            db.close()
-            flask.abort(400)
         stack = {}
-        for group in group_names:
-            stack[group[0]] = access_stack(db, group, ("group_name",))
+        for group in groups:
+            stack[group] = access_stack(
+                db, group, "SELECT uuid, group_name FROM access_groups WHERE "
+                "uuid IN supersets")
         uniq = set(sum([i[0] for i in stack.values()], []))
         info = self.group_query(db, access_groups=uniq)
         results = [self.access_info(
@@ -435,13 +424,11 @@ class AccessRoot:
         for invite, last in reversed(tuple(zip(payload.invitations, first))):
             # user accepted via
             # user has access to group through via (limitations.active = 1)
-            stack = tuple(filter(None, access_stack(db, invite.accessing)))
-            users_group = db.queryone(
-                "SELECT parents_group, until, spots FROM user_groups WHERE " +
-                "uuid=? AND member=? AND active=1 AND " +
-                "(until IS NULL or until>unixepoch()) AND access_group IN (" +
-                ", ".join(("?",) * len(stack)) + ")",
-                (invite.inviter, user) + stack, True)
+            users_group = access_stack(db, invite.accessing,
+                "SELECT parents_group, until, spots FROM user_groups WHERE "
+                "uuid=? AND member=? AND active=1 AND "
+                "(until IS NULL or until>unixepoch()) AND "
+                "access_group IN supersets", (invite.inviter, user), False)
             if users_group is None:
                 db.close()
                 flask.abort(401, description="invalid source")
@@ -538,32 +525,27 @@ class AccessRoot:
             # also ensures privledges query is not empty
             if access_group is None:
                 flask.abort(400)
-            stack = tuple(filter(None, access_stack(db, access_group)))
-            privledges = db.queryone(
-                "SELECT deauthorizes FROM invitations " +
-                "RIGHT JOIN user_groups ON parents_group=inviter " +
+            privledges = access_stack(
+                db, access_group, "SELECT MAX"
+                "(CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END) "
+                "AS deauthorizes FROM invitations "
+                "RIGHT JOIN user_groups ON parents_group=inviter "
                 "WHERE user_groups.active=1 AND member=? AND "
-                "(until IS NULL or until>unixepoch()) AND " +
-                "access_group IN (" + ", ".join(("?",) * len(stack)) +
-                ") ORDER BY deauthorizes DESC NULLS FIRST LIMIT 1",
-                (user,) + stack)
-            if privledges is None or privledges[0] == 0:
+                "(until IS NULL or until>unixepoch()) AND "
+                "access_group IN supersets", (user,), False).deauthorizes
+            if privledges == 0:
                 db.close()
                 flask.abort(401)
-            if privledges[0] == 1:
+            if privledges == 1:
                 # walk stack to check if user has any ancestor groups from
                 # user_group with privledges to deauthorize
                 # though under the current setup, there should only be one
                 # instance of user along any path from root
-                child, parent = isdescendant(db, user, revoking)
-                while parent:
-                    access = db.queryone(
-                        "SELECT deauthorizes FROM invitations "
-                        "WHERE inviter=?", (parent,))
-                    if access is not None and access[0] == 1:
-                        break
-                    child, parent = isdescendant(db, user, parent)
-                if not child:
+                if not ancestors(
+                        db, revoking, "SELECT user_groups.uuid FROM "
+                        "user_groups RIGHT JOIN invitations ON "
+                        "parents_group=inviter WHERE deauthorizes=1 AND "
+                        "member=? AND user_groups.uuid IN ancestors", (user,)):
                     db.close()
                     flask.abort(401)
             # no need to check privledges for deauthorizes in (2, None)
