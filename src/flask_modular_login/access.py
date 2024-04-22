@@ -16,9 +16,9 @@ def descendants(db, queries, selection=None, many=True):
     if len(queries) == 0:
         return [] if many else None
     selection = selection or ["via", "guild", "member", "access_group"]
-    initial, args = ("SELECT guild FROM user_groups WHERE member=?", (queries,))\
-            if type(queries) is str else \
-            ("VALUES" + ",".join("(?)" * len(queries)), queries)
+    initial, args = ("VALUES" + ",".join("(?)" * len(queries)), queries) \
+            if type(queries) is not str else \
+            ("SELECT guild FROM user_groups WHERE member=?", (queries,))
     # TODO: profile join vs subquery
     return db.many[many](
         "WITH RECURSIVE "
