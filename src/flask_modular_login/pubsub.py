@@ -263,8 +263,8 @@ class ServerWS(Handshake):
         cached = self.cache and self.cache.get(auth)
         if cached is None:
             timing = db.queryone(
-                "SELECT access_token, authtime, refresh_time FROM active WHERE "
-                "refresh=?", (auth,))
+                "SELECT access_token, authtime, refresh_time FROM active "
+                "WHERE refresh=?", (auth,))
             if timing is None:
                 return json.dumps([None, None])
             access, authtime, refresh_time = timing

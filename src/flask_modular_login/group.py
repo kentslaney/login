@@ -1,4 +1,4 @@
-import collections
+import collections, uuid
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -22,14 +22,14 @@ def access_stack(db, init, query, args=(), many=True):
             "VALUES(?) "
             "UNION ALL "
             "SELECT parent_group FROM access_groups, supersets "
-            "WHERE uuid=supersets.n"
+            "WHERE access_id=supersets.n"
           f") {query}", (init,) + args, True)
 
 # group can be a root last stack
 # calls db.commit
 def ismember(db, user, group):
     return access_stack(
-        db, group, "SELECT uuid, access_group FROM user_groups WHERE "
+        db, group, "SELECT guild, access_group FROM user_groups WHERE "
         "access_group IN supersets AND member=? AND active=1 AND "
         "(until IS NULL or until>unixepoch())", (user,), False)
 
@@ -55,19 +55,19 @@ class AccessGroup(OpShell):
         db = self.info.db(app).ctx.begin()
         parent = None if self.root else self.stack[-2].uuid
         access = db.queryone(
-            "SELECT parent_group, uuid FROM access_groups WHERE group_name=?",
+            "SELECT parent_group, access_id FROM access_groups WHERE group_name=?",
             (self.qualname,), True)
-        uniq = str(uuid.uuid4()) if access is None else access.uuid
+        uniq = str(uuid.uuid4()) if access is None else access.access_id
         if access is None or access.parent_group != parent:
             # update if the access_group structure has changed
             db.execute(
-                "INSERT INTO access_groups(group_name, parent_group, uuid) "
+                "INSERT INTO access_groups(group_name, parent_group, access_id)"
                 "VALUES (?, ?, ?) ON CONFLICT(group_name) DO UPDATE SET "
                 "parent_group=excluded.parent_group",
                 (self.qualname, parent, uniq))
             self.uuid = uniq
         else:
-            self.uuid = access.uuid
+            self.uuid = access.access_id
 
         if self.info.owner is not None and self.root:
             owner = db.queryone(
@@ -82,13 +82,12 @@ class AccessGroup(OpShell):
             else:
                 owner = owner[0]
                 changed = db.queryone(
-                    "SELECT 1 FROM user_groups WHERE parents_group IS NULL AND "
+                    "SELECT 1 FROM user_groups WHERE via IS NULL AND "
                     "until IS NULL AND spots IS NULL AND active=1 AND "
                     "member=? AND access_group=?", (owner, self.uuid)) is None
             if changed:
                 db.execute(
-                    "INSERT INTO "
-                    "user_groups(uuid, member, access_group) "
+                    "INSERT INTO user_groups(guild, member, access_group) "
                     "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
         db.commit().close()
 

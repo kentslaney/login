@@ -228,12 +228,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- replace python recursion with recursive queries
-- make invitation params composible via query builder (sqlalchemy)
-- switch to python-social-auth for OIDC support
-
-seems like the above scraps most of the existing code base
-
 - pub/sub JSON and group access queries
 - a way to revoke invitations not just permissions
 - make the login service start via construction of class imported from package
