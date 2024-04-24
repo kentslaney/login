@@ -1,11 +1,8 @@
-import (
-    flask, os, os.path, time, requests, websockets, json, asyncio, urllib,
-    multiprocessing)
+import flask, os, os.path, time, requests, websockets, json, asyncio, urllib
+import multiprocessing
 from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import (
-    default_backend as crypto_default_backend)
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -13,6 +10,8 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 from utils import project_path, RouteLobby, secret_key
 from login import refresh_access
 from group import ismember
+from store import FKHeadless
+from utils import relpath
 
 end_locals()
 
@@ -39,13 +38,15 @@ class Handshake:
     otp_timeout_ms = 5000
 
     def __init__(self, root_path=None):
-        root_path = root_path or project_path("run")
-        self.root_path = lambda *a: os.path.join(root_path, *a)
+        self._root_path = root_path or project_path("run")
         self.unix_path = self.root_path("refresh.sock")
+
+    def root_path(self, *a):
+        return os.path.join(self._root_path, *a)
 
     @staticmethod
     def serialized_public(key):
-        key.public_key().public_bytes(
+        return key.public_key().public_bytes(
             serialization.Encoding.PEM,
             serialization.PublicFormat.SubjectPublicKeyInfo)
 
@@ -54,10 +55,9 @@ class Handshake:
         if os.path.exists(self.root_path("private.pem")):
             with open(self.root_path("private.pem"), "rb") as fp:
                 key = serialization.load_pem_private_key(
-                    fp.read(), crypto_default_backend())
+                    fp.read(), password=None)
         else:
             key = rsa.generate_private_key(
-                backend=crypto_default_backend(),
                 public_exponent=65537,
                 key_size=2048
             )
@@ -78,8 +78,7 @@ class Handshake:
     def load_public(self):
         if os.path.exists(self.root_path("public.pem")):
             with open(self.root_path("public.pem"), 'rb') as fp:
-                self.public = serialization.load_pem_public_key(
-                    fp.read(), crypto_default_backend())
+                self.public = serialization.load_pem_public_key(fp.read())
             return False
         return True
 
@@ -88,8 +87,8 @@ class Handshake:
         return int(time.time() * 10 ** 3).to_bytes(8, 'big')
 
     # limits app secret key to 128, 192, or 256 bits
-    @staticmethod
-    def shared_secret():
+    @property
+    def secret(self):
         return secret_key()
 
     _salt = None
@@ -119,12 +118,12 @@ class Handshake:
         return message + h.finalize()
 
     def timestamp_expiration(self, data):
-        latency = time.time() - int.from_bytes(data[:8])
+        latency = time.time() - int.from_bytes(data[:8], 'big')
         assert latency < self.otp_timeout_ms, "signature timeout"
 
     # verifies the OTP timing but not salt
     def server_timer(self, data):
-        timestamp_expiration(data)
+        self.timestamp_expiration(data)
         h = hmac.HMAC(self.secret, hashes.SHA256())
         h.update(data[:8])
         g = h.copy()
@@ -143,8 +142,7 @@ class Handshake:
     def save_public(self, serialized):
         with open(self.root_path("public.pem"), "wb") as fp:
             fp.write(serialized)
-        public = serialization.load_pem_public_key(
-            serialized, crypto_default_backend())
+        public = serialization.load_pem_public_key(serialized)
         return public
 
     # server: verifies the client has the shared secret
@@ -208,15 +206,16 @@ class Handshake:
 server_lobby = RouteLobby()
 
 class ServerBP(Handshake):
-    def __init__(self, db, *a, **kw, root_path=None):
+    def __init__(self, db, *a, root_path=None, **kw):
         super().__init__(root_path)
         self.db, self.a, self.kw = db, a, kw
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
         server_lobby.register_lobby(self.bp, self)
         self.keypair()
+        self.forkWS() # TODO
 
     def forkWS(self):
-        ws = ServerWS(self.db, *self.a, root_path=self.root_path, **self.kw)
+        ws = ServerWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
     @server_lobby.route("/syn", methods=["POST"])
@@ -232,10 +231,8 @@ class ServerBP(Handshake):
             self.server_timer(flask.request.data)
         except:
             flask.abort(401)
-        since = flask.request.args.get("since")
-        if since is None:
-            flask.abort(400)
-        return json.dumps(self.db.queryall(
+        since = flask.request.args.get("since", 0)
+        return json.dumps(self.db().queryall(
             "SELECT rowid, revoked_time, access_token, refresh_time "
             "FROM revoked WHERE revoked_time>?", (since,)))
 
@@ -247,19 +244,32 @@ class ServerBP(Handshake):
     def deauthorize(self, revoked_time, access, refresh_time):
         asyncio.run(self.send_deauthorize(revoked_time, access, refresh_time))
 
-class ServerWS(Handshake):
+class WSHandshake(Handshake):
+    _db = None
+    def db(self):
+        if self._db is None:
+            self._db = FKHeadless(
+                self.root_path("users.db"), relpath("schema.sql"))
+        return self._db
+
+class ServerWS(WSHandshake):
     def __init__(
-            self, db, host, port, cache=None, access_timeout=3600*24,
-            refresh_timeout=3600*24*90, *, root_path=None):
+            self, host="localhost", port=8001, cache=None,
+            access_timeout=3600*24, refresh_timeout=3600*24*90, *,
+            root_path=None):
         super().__init__(root_path)
         self.host, self.port = host, port
-        self.db, self.cache, self.secondaries = db, cache, set()
+        self.cache, self.secondaries = cache, set()
         self.access_timeout = access_timeout
         self.refresh_timeout = refresh_timeout
+
+    @property
+    def key(self):
         self.keypair()
+        return self.key
 
     def refresh(self, auth):
-        db = self.db.begin()
+        db = self.db().begin()
         cached = self.cache and self.cache.get(auth)
         if cached is None:
             timing = db.queryone(
@@ -288,7 +298,7 @@ class ServerWS(Handshake):
         return json.dumps([access, refresh_time])
 
     def access_query(self, user, access_group):
-        db = self.db.begin()
+        db = self.db().begin()
         res = json.dumps(ismember(db, user, access_group))
         db.close()
         return res
@@ -312,14 +322,14 @@ class ServerWS(Handshake):
         self.server_timer(init)
         self.secondaries.add(ws)
         try:
-            async for message in ws.recv():
+            async for message in ws:
                 refresh_token = self.handler(self.server_recieve(message))
                 await ws.send(self.server_send(refresh_token))
         finally:
             self.secondaries.remove(ws)
 
     async def router(self, ws):
-        message = ws.recv()
+        message = await ws.recv()
         if len(message) == 0x28: # OTP length
             await self.secondary(ws, message)
         else:
@@ -333,19 +343,25 @@ class ServerWS(Handshake):
     def run(self):
         asyncio.run(self.main())
 
-class ClientWS(Handshake):
+class ClientWS(WSHandshake):
     # TODO: json based messages
 
     # TODO: maybe timeout after long silence and reconnect when a request hits
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
     # TODO: access queries
 
-    def __init__(self, db, base_url, uri, cache=None, *, root_path=None):
-        super.__init__(root_path)
-        self.uri, self.db, self.cache = uri, db, cache
-        self.url = lambda path, query=None: base_url + "/ws" + path + (
+    def __init__(self, base_url, uri, cache=None, *, root_path=None):
+        super().__init__(root_path)
+        self.uri, self.cache = uri, cache
+        self._url = base_url
+
+    def url(self, path, query=None):
+        return self._url + "/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
-        self.load_public()
+
+    @property
+    def public(self):
+        return self.load_public()
 
     def load_public(self):
         if super().load_public():
@@ -354,18 +370,19 @@ class ClientWS(Handshake):
         return self.public
 
     def update(self):
-        since = self.db.queryone("SELECT MAX(revoked_time) FROM revoked")
-        data = requests.get(self.url("updates"), since or {"since": since[0]})
-        self.revoke(json.loads(data))
+        since = self.db().queryone("SELECT MAX(revoked_time) FROM revoked")[0]
+        data = requests.post(
+            self.url("/updates"), self.otp(), params=since or {"since": since})
+        self.revoke(json.loads(data.content))
 
     def revoke(self, info):
         # TODO: cache sync
-        self.db.executemany(
+        self.db().executemany(
             "INSERT INTO ignore(ref, revoked_time, access_token, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
 
     def refresh_access(self, refresh, access, refresh_time):
-        self.db.execute(
+        self.db().execute(
             "UPDATE active SET access_token=?, refresh_time=? WHERE refresh=?",
             (access, refresh_time, refresh))
 
@@ -380,20 +397,22 @@ class ClientWS(Handshake):
         q = asyncio.Queue()
         async def handler(ws):
             e = asyncio.Event()
-            async for message in ws.recv():
+            async for message in ws:
                 local.put((ws, message, e))
                 await e.wait()
 
         async with websockets.connect(self.uri) as notify, \
                 websockets.connect(self.uri) as query, \
                 websockets.unix_serve(handler, self.unix_path):
-            wsr.send(self.otp())
-            asyncio.to_thread(self.update)
+            await notify.send(self.otp())
+            await query.send(self.otp())
             remote, local = notify.recv(), q.get()
+            await asyncio.to_thread(self.update)
 
             while True:
                 done, pending = await asyncio.wait(
-                    [remote, local], return_when=asyncio.FIRST_COMPLETED)
+                    list(map(asyncio.create_task, [remote, local])),
+                    return_when=asyncio.FIRST_COMPLETED)
                 done = next(iter(done))
                 if remote is done:
                     self.router(json.loads(self.client_recieve(done.result())))
@@ -408,12 +427,13 @@ class ClientWS(Handshake):
                     local = q.get()
 
     def run(self):
-        asyncio.run(self.listen)
+        asyncio.run(self.listen())
 
 class ClientBP(Handshake):
     def __init__(self, *a, root_path=None, **kw):
         super().__init__(root_path)
         self.a, self.kw = a, kw
+        self.forkWS() # TODO
 
     async def reload_access(self, refresh):
         async with websockets.unix_connect(self.unix_path) as websocket:
@@ -423,9 +443,14 @@ class ClientBP(Handshake):
         return asyncio.run(self.reload_access(refresh))
 
     def forkWS(self):
-        ws = ClientWS(*self.a, root_path=self.root_path, **self.kw)
+        ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
 class RemoteLoginBuilder:
     ...
+
+if __name__ == "__main__":
+    ClientWS(
+        base_url="http://localhost:8000/login", uri="ws://localhost:8001",
+        root_path=project_path("run")).run()
 

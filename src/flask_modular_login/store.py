@@ -184,18 +184,18 @@ class HeadlessDB:
                 self.db_init_hook()
 
     @property
-    def persist(self):
+    def g(self):
         if self._g is None:
             self._g = type("global_store", (), {})()
         return self._g
 
     # returns a database connection
     def get(self):
-        db = getattr(self._g, "_auth_database", None)
+        db = getattr(self.g, "_auth_database", None)
         if db is None:
-            db = self._g._auth_database = {}
+            db = self.g._auth_database = {}
         if self.database not in db:
-            con = db[self.database] = self._g._auth_database[self.database] = \
+            con = db[self.database] = self.g._auth_database[self.database] = \
                 sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
@@ -246,11 +246,11 @@ class HeadlessDB:
         return self.get().commit()
 
     def close(self):
-        db = getattr(self._g, '_auth_database', None)
+        db = getattr(self.g, '_auth_database', None)
         if db is not None:
             for con in db.values():
                 con.close()
-            self._g._auth_database = {}
+            self.g._auth_database = {}
 
     def db_init_hook(self):
         pass
@@ -272,7 +272,7 @@ class DefaultsDB:
     default_sql = []
 
     def get(self):
-        if not hasattr(self._g, "_auth_database"):
+        if not hasattr(self.g, "_auth_database"):
             lower_init = set(sql.lower() for sql in self.init)
             prepend = []
             for sql in self.default_sql:
@@ -281,6 +281,12 @@ class DefaultsDB:
             self.init = prepend + self.init
         return super().get()
 
-class FKDatabase(DefaultsDB, Database):
+class FKDefault(DefaultsDB):
     default_sql = ["PRAGMA foreign_keys = ON"]
+
+class FKDatabase(FKDefault, Database):
+    pass
+
+class FKHeadless(FKDefault, HeadlessDB):
+    pass
 

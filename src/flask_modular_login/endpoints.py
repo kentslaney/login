@@ -6,6 +6,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 from interface import OAuthBlueprint
 from login import authorized
 from utils import RouteLobby
+from pubsub import ServerBP
 
 end_locals()
 
@@ -16,6 +17,9 @@ class LoginBlueprint(OAuthBlueprint):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         login_lobby.register_lobby(self, self)
+        self._oauth_ws = ServerBP(
+            self._oauth_db, root_path=self._oauth_run_root)
+        self.register_blueprint(self._oauth_ws.bp)
 
     @login_lobby.route("/logout")
     def _oauth_logout(self):

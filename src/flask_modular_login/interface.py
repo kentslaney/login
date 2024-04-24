@@ -4,7 +4,7 @@ import flask, flask_caching
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from store import FKDatabase
+from store import FKDatabase, FKHeadless
 from utils import RouteLobby, relpath, project_path
 from login import DBStore, methods, authorized, safe_redirect
 from access import AccessRoot
@@ -72,8 +72,7 @@ class OAuthBlueprint(flask.Blueprint):
             return FKDatabase(
                 app, db_path, relpath("schema.sql"), debug=app.debug)
         else:
-            return HeadlessDB(
-                db_path, relpath("schema.sql"), FKDatabase.default_sql)
+            return FKHeadless(db_path, relpath("schema.sql"))
 
     def _oauth_register(self, app):
         self._oauth_apps.append(app)
