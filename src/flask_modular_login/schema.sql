@@ -10,26 +10,24 @@ CREATE UNIQUE INDEX platform ON auths(method, platform_id);
 CREATE UNIQUE INDEX authid ON auths(uuid);
 CREATE TABLE active (
     uuid TEXT,
-    access_token TEXT,
     refresh TEXT,
     ip TEXT, -- TODO: keep history?
     authtime FLOAT,
     refresh_time FLOAT,
     FOREIGN KEY(uuid) REFERENCES auths(uuid) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX activities ON active(access_token);
 CREATE UNIQUE INDEX persistent ON active(refresh);
 CREATE TABLE revoked (
     revoked_time FLOAT,
-    access_token TEXT,
+    refresh TEXT,
     authtime FLOAT,
     refresh_time FLOAT
 );
-CREATE UNIQUE INDEX removed ON revoked(access_token);
+CREATE UNIQUE INDEX removed ON revoked(refresh);
 CREATE TABLE ignore (
     ref INT,
     revoked_time FLOAT,
-    access_token TEXT,
+    refresh TEXT,
     refresh_time FLOAT
 );
 

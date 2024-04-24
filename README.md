@@ -229,7 +229,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 
 ## TODOs
 - pub/sub JSON and group access queries
-- no need to separate access vs refresh tokens, just add a lease time
 - make the login service start via construction of class imported from package
 - set the platforms via launch conditions and allow extensibility of /login BP
 - need a way to create an AccessGroup object via UUID or group name

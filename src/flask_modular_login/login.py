@@ -62,28 +62,27 @@ def authorized(session_=None):
         return methods[method][0].authorized
 
 # this needs to go through login server for remote calls
-def refresh_access(db, access, refresh, refresh_time, access_timeout, cached):
+def refresh_access(db, refresh, refresh_time, lease_timeout, cached):
     now = int(time.time())
-    if access_timeout and now - refresh_time > access_timeout:
+    if lease_timeout and now - refresh_time > lease_timeout:
         if cached:
-            cur, update = db.queryone(
-                "SELECT access_token, refresh_time from active WHERE refresh=?",
+            update = db.queryone(
+                "SELECT refresh_time from active WHERE refresh=?",
                 (refresh,))
-            if cur != access and now - update < access_timeout:
-                return True, False, cur, update
-        access = secrets.token_urlsafe(32)
+            if update is not None and now - update[0] < lease_timeout:
+                return True, False, update[0]
         db.execute(
-            "UPDATE active SET access_token=?, refresh_time=? "
-            "WHERE refresh=?", (access, now, refresh))
-        return True, False, access, now
-    return False, False, access, refresh_time
+            "UPDATE active SET refresh_time=? WHERE refresh=?",
+            (now, refresh))
+        return True, True, now
+    return False, False, refresh_time
 
 class DBStore(BaseStorage):
     def __init__(self, db, method, cache=None, session_=None,
-                 access_timeout=3600*24, refresh_timeout=3600*24*90):
+                 lease_timeout=3600*24, refresh_timeout=None):
         super().__init__()
         self.db, self.method = db, method
-        self.access_timeout = access_timeout
+        self.lease_timeout = lease_timeout
         self.refresh_timeout = refresh_timeout
         self.cache = cache or FakeCache()
         self.session = session_ or (lambda: flask.session)
@@ -111,18 +110,18 @@ class DBStore(BaseStorage):
                 "SELECT uuid FROM auths WHERE method = ? AND platform_id = ?",
                 (self.method, info["id"]))[0]
 
-        secret, authtime = secrets.token_urlsafe(32), int(time.time())
+        authtime = int(time.time())
         refresh = secrets.token_urlsafe(32)
         ip = flask.request.remote_addr
-        session_["user"], session_["access"] = uniq, secret
+        session_["user"] = uniq
         session_["refresh"], session_["refresh_time"] = refresh, authtime
         session_["name"], session_["picture"] = info["name"], info["picture"]
         self.db.execute(
             "INSERT INTO active"
-            "(uuid, access_token, refresh, ip, authtime, refresh_time) "
+            "(uuid, refresh, ip, authtime, refresh_time) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (uniq, secret, refresh, ip, authtime, authtime))
-        self.cache.set(refresh, (token, secret, ip, authtime, authtime))
+            (uniq, refresh, ip, authtime, authtime))
+        self.cache.set(refresh, (token, ip, authtime, authtime))
 
     def get(self, blueprint):
         db = self.db.begin()
@@ -134,7 +133,7 @@ class DBStore(BaseStorage):
         cached = self.cache.get(refresh)
         if cached is None:
             info = db.queryone(
-                "SELECT auths.token, active.access_token, active.ip, "
+                "SELECT auths.token, active.ip, "
                 "active.authtime, active.refresh_time "
                 "FROM active LEFT JOIN auths ON auths.uuid=active.uuid "
                 "WHERE active.refresh=?", (refresh,))
@@ -142,10 +141,10 @@ class DBStore(BaseStorage):
                 session_.clear()
                 return None
 
-            token, access, ip, authtime, refresh_time = info
+            token, ip, authtime, refresh_time = info
             info = list(info)
         else:
-            token, access, ip, authtime, refresh_time = cached
+            token, ip, authtime, refresh_time = cached
             cached = list(cached)
 
         if self.refresh_timeout and int(
@@ -154,13 +153,13 @@ class DBStore(BaseStorage):
             session_.clear()
             return None
 
-        updated, write, access, refresh_time = refresh_access(
-            db, access, refresh, refresh_time, self.access_timeout,
+        updated, write, refresh_time = refresh_access(
+            db, refresh, refresh_time, self.lease_timeout,
             cached is not None)
 
         if updated:
             info = info or cached
-            info[1], info[4] = access, refresh_time
+            info[3] = refresh_time
 
         current_ip = flask.request.remote_addr
         if ip != current_ip:
@@ -201,9 +200,9 @@ class DBStore(BaseStorage):
         if authtime == None:
             return None
         db.execute(
-            "INSERT INTO revoked(revoked_time, access_token, authtime, "
+            "INSERT INTO revoked(revoked_time, refresh, authtime, "
             "refresh_time) VALUES (?, ?, ?, ?)", (
-                float(time.time()), session_["access"], authtime[0],
+                float(time.time()), session_["refresh"], authtime[0],
                 session_["refresh_time"]))
         db.execute(
             "DELETE FROM active WHERE refresh=?", (refresh,))

@@ -233,16 +233,16 @@ class ServerBP(Handshake):
             flask.abort(401)
         since = flask.request.args.get("since", 0)
         return json.dumps(self.db().queryall(
-            "SELECT rowid, revoked_time, access_token, refresh_time "
+            "SELECT rowid, revoked_time, refresh, refresh_time "
             "FROM revoked WHERE revoked_time>?", (since,)))
 
-    async def send_deauthorize(self, revoked_time, access, refresh_time):
+    async def send_deauthorize(self, revoked_time, refresh, refresh_time):
         async with websockets.connect(self.unix_path) as websocket:
             await websocket.send(self.server_sync(json.dumps(
-                [[revoked_time, access, refresh_time]])))
+                [[revoked_time, refresh, refresh_time]])))
 
-    def deauthorize(self, revoked_time, access, refresh_time):
-        asyncio.run(self.send_deauthorize(revoked_time, access, refresh_time))
+    def deauthorize(self, revoked_time, refresh, refresh_time):
+        asyncio.run(self.send_deauthorize(revoked_time, refresh, refresh_time))
 
 class WSHandshake(Handshake):
     _db = None
@@ -255,12 +255,12 @@ class WSHandshake(Handshake):
 class ServerWS(WSHandshake):
     def __init__(
             self, host="localhost", port=8001, cache=None,
-            access_timeout=3600*24, refresh_timeout=3600*24*90, *,
+            lease_timeout=3600*24, refresh_timeout=None, *,
             root_path=None):
         super().__init__(root_path)
         self.host, self.port = host, port
         self.cache, self.secondaries = cache, set()
-        self.access_timeout = access_timeout
+        self.lease_timeout = lease_timeout
         self.refresh_timeout = refresh_timeout
 
     @property
@@ -273,13 +273,13 @@ class ServerWS(WSHandshake):
         cached = self.cache and self.cache.get(auth)
         if cached is None:
             timing = db.queryone(
-                "SELECT access_token, authtime, refresh_time FROM active "
+                "SELECT authtime, refresh_time FROM active "
                 "WHERE refresh=?", (auth,))
             if timing is None:
                 return json.dumps([None, None])
-            access, authtime, refresh_time = timing
+            authtime, refresh_time = timing
         else:
-            _, access, _, authtime, refresh_time = cached
+            _, _, authtime, refresh_time = cached
 
         if self.refresh_timeout and int(
                 time.time()) - authtime > self.refresh_timeout:
@@ -287,15 +287,16 @@ class ServerWS(WSHandshake):
                 self.cache.delete(auth)
             return json.dumps([None, None])
 
-        write, access, refresh_time = refresh_access(
-            db, access, auth, refresh_time, self.access_timeout,
+        updated, write, refresh_time = refresh_access(
+            db, auth, refresh_time, self.lease_timeout,
             cached is not None)
+        # TODO: cache on updated
 
         if write:
             db.commit()
         db.close()
 
-        return json.dumps([access, refresh_time])
+        return json.dumps(refresh_time)
 
     def access_query(self, user, access_group):
         db = self.db().begin()
@@ -378,17 +379,17 @@ class ClientWS(WSHandshake):
     def revoke(self, info):
         # TODO: cache sync
         self.db().executemany(
-            "INSERT INTO ignore(ref, revoked_time, access_token, refresh_time) "
+            "INSERT INTO ignore(ref, revoked_time, refresh, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
 
-    def refresh_access(self, refresh, access, refresh_time):
+    def refresh_access(self, refresh, refresh_time):
         self.db().execute(
-            "UPDATE active SET access_token=?, refresh_time=? WHERE refresh=?",
-            (access, refresh_time, refresh))
+            "UPDATE active SET refresh_time=? WHERE refresh=?",
+            (refresh_time, refresh))
 
     async def io_hook(self, message, reply):
         data = json.dumps(reply)
-        self.refresh_access(message, *data)
+        self.refresh_access(message, data)
 
     def router(self, message):
         return self.revoke(message)
