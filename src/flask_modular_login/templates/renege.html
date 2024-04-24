@@ -1,0 +1,26 @@
+{% extends 'options.html' %}
+
+{% block options %}
+    {% for remove in (hosts[0] + hosts[1] + hosts[2])|sort(
+            attribute="display_name,group_name") %}
+        <div class="option">
+            <input type="checkbox" name="{{ remove.invite }}"
+                id="{{ remove.invite }}" />
+            <label for="{{ remove.invite }}">
+                invite by {{ remove.display_name }} to {{ remove.group_name }}
+            </label>
+            <div class="action" data-for="{{ remove.invite }}">
+                <li>
+                    revoke invitation {{ remove.invite }}
+                    for access group {{ remove.accessing }}
+                </li>
+                <ul>
+                    {% for attr in remove._fields[:15] %}
+                    <li>{{ attr }}: {{ remove[attr] }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endfor %}
+{% endblock %}
+

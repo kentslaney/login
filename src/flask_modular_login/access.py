@@ -12,11 +12,10 @@ end_locals()
 lenUUID = len(str(uuid.uuid4()))
 
 # queries is either a str reprsenting a user UUID or a list of `users_group`s
-def descendants(db, queries, selection=None, many=True):
+def descendants(db, queries, selection, many=True):
     if len(queries) == 0:
         return [] if many else None
-    selection = selection or ["via", "guild", "member", "access_group"]
-    initial, args = ("VALUES" + ",".join("(?)" * len(queries)), queries) \
+    initial, args = ("VALUES" + ",".join(("(?)",) * len(queries)), queries) \
             if type(queries) is not str else \
             ("SELECT guild FROM user_groups WHERE member=?", (queries,))
     # TODO: profile join vs subquery
@@ -27,8 +26,7 @@ def descendants(db, queries, selection=None, many=True):
             "user_groups RIGHT JOIN invitations ON via=invite, descendants "
             "WHERE inviter=descendants.n"
           ") "
-        f"SELECT {','.join(selection)} FROM user_groups "
-        "WHERE guild IN descendants", args, True)
+        f"{selection}", args, True)
 
 # checks if a group descends from user, returns None if not
 # otherwise, returns the child and parent group of the user_group for user
@@ -200,12 +198,17 @@ class AccessRoot:
         # lower depletions; invites' invitees is not None if depletes
         chain = ancestors(
             db, info.inviter, "SELECT guild, member, spots, invite, invitees, "
-            "depletes FROM user_groups RIGHT JOIN invitations on inviter=guild "
+            "depletes FROM user_groups LEFT JOIN invitations on via=invite "
             "WHERE guild IN ancestors")
         if any(i.member == user for i in chain):
             db.close()
             flask.abort(412)
+        if info.invitees == 0:
+            db.close()
+            flask.abort(404)
         invite_update, user_update = [], []
+        if info.invitees is not None:
+            invite_update.append((info.invitees - 1, invite))
         for i, level in enumerate(chain):
             if level.spots == 0 or level.invitees == 0:
                 db.close()
@@ -261,8 +264,8 @@ class AccessRoot:
 
     @staticmethod
     def depletion_bound(db, initial):
-        opt = lambda *a: None if all(i is None for i in a) else min(*(
-            i for i in a if i is not None))
+        opt = lambda *a: None if all(i is None for i in a) else min(
+            i for i in a if i is not None)
         minimum, chain = None, ancestors(
             db, initial, "SELECT spots, invitees, depletes "
             "FROM user_groups RIGHT JOIN invitations on via=invite "
@@ -359,13 +362,13 @@ class AccessRoot:
             flask.abort(400, description="missing redirect")
         payload = {
             "redirect": form.get("redirect"), "confirm": "confirm" in form,
-            "invitees": form.get("invitees"), "invitations": []}
+            "invitees": form.get("invitees") or None, "invitations": []}
         try:
             tz = datetime.timezone(
                 -datetime.timedelta(minutes=int(form.get("tz", 0))))
         except ValueError:
             flask.abort(400, description="invalid tz")
-        if form["invitees"] is not None:
+        if payload["invitees"] is not None:
             try:
                 payload["invitees"] = int(payload["invitees"])
             except ValueError:
@@ -505,6 +508,16 @@ class AccessRoot:
         self.kick(flask.request.json)
         return flask.request.data
 
+    def stack_auth(self, db, user, access_group):
+        return access_stack(
+                db, access_group, "SELECT MAX"
+                "(CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END) "
+                "AS deauthorizes FROM invitations "
+                "RIGHT JOIN user_groups ON via=invite "
+                "WHERE user_groups.active=1 AND member=? AND "
+                "(until IS NULL or until>unixepoch()) AND "
+                "access_group IN supersets", (user,), False).deauthorizes
+
     def kick(self, payload):
         user = self.authorize()
         payload = data_payload(payload, self.removal_args, True)
@@ -518,14 +531,7 @@ class AccessRoot:
             # also ensures privledges query is not empty
             if access_group is None:
                 flask.abort(400)
-            privledges = access_stack(
-                db, access_group, "SELECT MAX"
-                "(CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END) "
-                "AS deauthorizes FROM invitations "
-                "RIGHT JOIN user_groups ON via=invite "
-                "WHERE user_groups.active=1 AND member=? AND "
-                "(until IS NULL or until>unixepoch()) AND "
-                "access_group IN supersets", (user,), False).deauthorizes
+            privledges = self.stack_auth(db, user, access_group)
             if privledges == 0:
                 db.close()
                 flask.abort(401)
@@ -541,7 +547,7 @@ class AccessRoot:
                         "member=? AND guild IN ancestors", (user,)):
                     db.close()
                     flask.abort(401)
-            # no need to check privledges for deauthorizes in (2, None)
+            # no need to check privledges for deauthorizes == 2
         db.executemany(
             "UPDATE user_groups SET active=0 WHERE guild=?",
             [(guild,) for guild in payload])
@@ -559,8 +565,10 @@ class AccessRoot:
             permissions[group.deauthorizes].append(group)
         # permissions[1] access_group, group_name (descendants all in implied)
         # member, access_group, uuid
-        childrens_groups = descendants(db, [
-            group.guild for group in permissions[1]])
+        childrens_groups = descendants(
+            db, [group.guild for group in permissions[1]],
+            "SELECT via, guild, member, access_group FROM user_groups "
+            "WHERE guild IN descendants")
         # permissions[2] access_group, group_name
         implied = set() if len(permissions[2]) == 0 else set(
             i[0] for group in permissions[2] for i in group.implied_groups)
@@ -603,4 +611,92 @@ class AccessRoot:
             removing = list(flask.request.form.keys())
             self.kick(removing)
             return json.dumps(removing)
+
+    invite_cols = 15
+    invite_info = collections.namedtuple("InviteInfo", (
+        "invite", "accessing", "inviter", "acceptance_expiration",
+        "access_expiration", "access_limit", "invitees", "plus", "depletes",
+        "dos", "deauthorizes", "implies", "implied", "redirect", "active",
+        "group_name", "display_name"))
+
+    # returns member, user_group, access_group, group_name
+    def hosting(self, user, db=None):
+        db = db or self.db().begin()
+        groups = self.user_groups(user, db=db)
+        permissions = [[], [], []]
+        for group in groups:
+            permissions[group.deauthorizes].append(group)
+        selection = ", ".join(self.invite_info._fields[:self.invite_cols])
+        childrens_invites = descendants(
+            db, [group.guild for group in permissions[1]],
+            f"SELECT {selection} FROM invitations WHERE inviter IN descendants "
+            "AND active=1")
+        flat = tuple(set(sum([
+            group.implied_groups[0] for group in permissions[2]], ())))
+        group_invites = [] if len(flat) == 0 else db.queryall(
+            f"SELECT {selection} FROM invitations WHERE accessing IN (" +
+            ", ".join(("?",) * len(flat)) + ") AND active=1", flat, True)
+        personal_invites = [] if len(permissions[0]) == 0 else db.queryall(
+            f"SELECT {selection} FROM invitations WHERE inviter IN (" +
+            ", ".join(("?",) * len(permissions[0])) + ") AND active=1", [
+                group.guild for group in permissions[0]], True)
+        levels = [personal_invites, childrens_invites, group_invites]
+        directory = dict(sum([group.implied_groups for group in groups], []))
+        user_groups = set(group.inviter for group in sum(levels, []))
+        usernames = dict(db.queryall(
+            "SELECT guild, display_name FROM auths "
+            "RIGHT JOIN user_groups ON member=auths.uuid WHERE guild IN (" +
+            ", ".join(("?",) * len(user_groups)) + ")", tuple(user_groups)))
+        return [[
+            self.invite_info(
+                *group, directory[group.accessing], usernames[group.inviter])
+            for group in level] for level in levels]
+
+    renege_args = [str]
+
+    def uninvite(self, payload):
+        user = self.authorize()
+        payload = data_payload(payload, self.renege_args, True)
+        db = self.db().begin()
+        access_groups = {i[0]: i[1:] for i in db.queryall(
+            "SELECT invite, accessing, inviter FROM invitations " +
+            "WHERE invite IN (" + ", ".join(("?",) * len(payload)) + ")",
+            [reneging for reneging in payload])}
+        for reneging in payload:
+            access_group = access_groups.get(reneging, [None])
+            # also ensures privledges query is not empty
+            if access_group[0] is None:
+                flask.abort(400)
+            privledges = self.stack_auth(db, user, access_group[0])
+            if privledges == 0 and (user,) != db.queryone(
+                    "SELECT member FROM user_groups WHERE guild=?",
+                    (access_group[1],)):
+                db.close()
+                flask.abort(401)
+            if privledges == 1 and not ancestors(
+                    db, access_group[1], "SELECT guild FROM "
+                    "user_groups RIGHT JOIN invitations ON "
+                    "via=invite WHERE deauthorizes=1 AND "
+                    "member=? AND guild IN ancestors", (user,)):
+                db.close()
+                flask.abort(401)
+        db.executemany(
+            "UPDATE invitations SET active=0 WHERE invite=?",
+            [(invite,) for invite in payload])
+        db.commit().close()
+
+    @access_lobby.template_json("/renege", "renege.html")
+    @access_lobby.route("/view/renege", methods=["POST"])
+    def renege(self):
+        if flask.request.method == "GET":
+            return {"hosts": self.hosting(self.authorize())}
+        else:
+            removing = list(flask.request.form.keys())
+            self.uninvite(removing)
+            return json.dumps(removing)
+
+    @access_lobby.route("/cancel", methods=["POST"])
+    def cancel(self):
+        self.uninvite(flask.request.json)
+        return flask.request.data
 

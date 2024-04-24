@@ -229,7 +229,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 
 ## TODOs
 - pub/sub JSON and group access queries
-- a way to revoke invitations not just permissions
+- no need to separate access vs refresh tokens, just add a lease time
 - make the login service start via construction of class imported from package
 - set the platforms via launch conditions and allow extensibility of /login BP
 - need a way to create an AccessGroup object via UUID or group name
@@ -237,7 +237,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 - lambda based group construction
 - local secondary via WS unix socket to interface with other languages/aiohttp
 - build a use case
-- option to auto-redirect to QR code link when logging in not to /qr url
+- option to auto-redirect to QR code link on first login if not at /qr
 - group add_user, remove_user, etc
 - linked accounts
 - RemoteLoginBuilder needs to implement access group creation/adding users/etc

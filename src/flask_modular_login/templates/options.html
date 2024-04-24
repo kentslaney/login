@@ -1,0 +1,34 @@
+<html>
+    <form method="POST">
+    {% block options %}{% endblock %}
+    Queued actions:
+    <ul id="effects"></ul>
+    <input type="submit" value="submit" id="submit" />
+    </form>
+<style>
+#effects > .action:not(.active) { display: none; }
+</style>
+<script type="text/javascript">
+window.addEventListener("load", e => {
+    let container = document.getElementById("effects")
+    let actions = Array.prototype.slice.call(
+        document.getElementsByClassName("action"))
+    let submit = document.getElementById("submit")
+    submit.disabled = true
+    for (let el of actions) {
+        const chk = document.getElementById(el.getAttribute("data-for"))
+        el.parentElement.removeChild(el)
+        container.appendChild(el)
+        const f = ((chk, el) => () => {
+            if (chk.checked) el.classList.add("active")
+            else el.classList.remove("active")
+            submit.disabled = document.getElementsByClassName(
+                "active").length == 0
+        })(chk, el)
+        f()
+        chk.addEventListener("change", f)
+    }
+})
+</script>
+</html>
+

@@ -78,7 +78,11 @@ in the longer one if the first unmatched character is a separator
                 </label>
                 <input type="checkbox" name="depletes-{{implied[0]}}"
                     id="depletes-chk-{{implied[0]}}"
-                    {{'checked disabled' if group.depletes else ''}}" />
+                    {% if group.depletes %}
+                    checked disabled />
+                <input type="hidden" name="depletes-{{implied[0]}}" value="on"
+                    {% endif %}
+                    />
             </li>
             <li class="bounded-num">
                 <span>dos</span>:
