@@ -1,4 +1,4 @@
-import os.path, functools, collections
+import os.path, functools, collections, threading
 
 # http://flask.pocoo.org/docs/0.11/patterns/sqlite3/
 import sqlite3, contextlib
@@ -195,8 +195,7 @@ class HeadlessDB:
         if db is None:
             db = self.g._auth_database = {}
         if self.database not in db:
-            con = db[self.database] = self.g._auth_database[self.database] = \
-                sqlite3.connect(self.database)
+            con = db[self.database] = sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
             if self.debug:
@@ -289,4 +288,16 @@ class FKDatabase(FKDefault, Database):
 
 class FKHeadless(FKDefault, HeadlessDB):
     pass
+
+class ThreadDB(FKHeadless):
+    @property
+    def g(self):
+        g = super().g
+        if not hasattr(g, "threads"):
+            g.threads = {}
+        t = g.threads
+        tid = threading.current_thread().ident
+        if tid not in t:
+            t[tid] = type("thread_store", (), {})()
+        return t[tid]
 

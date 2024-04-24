@@ -62,8 +62,8 @@ class OAuthBlueprint(flask.Blueprint):
                 for name, method in self._oauth_blueprints.items()})
         return flask.redirect("/" if url is None else url)
 
-    def _oauth_deauthorize(self, token, method):
-        self._oauth_stores[method].deauthorize(token)
+    def _oauth_deauthorize(self, token, method, callback=None):
+        self._oauth_stores[method].deauthorize(token, callback=callback)
 
     def _oauth_db(self, app=None):
         app = app or flask.current_app

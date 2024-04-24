@@ -119,7 +119,7 @@ class DBStore(BaseStorage):
         self.db.execute(
             "INSERT INTO active"
             "(uuid, refresh, ip, authtime, refresh_time) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?)",
             (uniq, refresh, ip, authtime, authtime))
         self.cache.set(refresh, (token, ip, authtime, authtime))
 
@@ -189,7 +189,7 @@ class DBStore(BaseStorage):
 
         self.db.execute("DELETE FROM auths WHERE uuid=?", (session_["user"],))
 
-    def deauthorize(self, refresh, user=None):
+    def deauthorize(self, refresh, user=None, callback=lambda *a: None):
         session_ = self.session()
         db = self.db.begin()
         user_query, user_args = ("", ()) if user is None else \
@@ -199,11 +199,14 @@ class DBStore(BaseStorage):
             (refresh,) + user_args)
         if authtime == None:
             return None
-        db.execute(
+        now = float(time.time())
+        rowid = db.execute(
             "INSERT INTO revoked(revoked_time, refresh, authtime, "
             "refresh_time) VALUES (?, ?, ?, ?)", (
-                float(time.time()), session_["refresh"], authtime[0],
+                now, session_["refresh"], authtime[0],
                 session_["refresh_time"]))
+        callback(
+            rowid, now, session_["refresh"], session_["refresh_time"])
         db.execute(
             "DELETE FROM active WHERE refresh=?", (refresh,))
         self.cache.delete(refresh)

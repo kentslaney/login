@@ -1,4 +1,4 @@
-import datetime, flask, urllib.parse, functools
+import datetime, flask, urllib.parse, functools, time
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -20,6 +20,10 @@ class LoginBlueprint(OAuthBlueprint):
         self._oauth_ws = ServerBP(
             self._oauth_db, root_path=self._oauth_run_root)
         self.register_blueprint(self._oauth_ws.bp)
+
+    def _oauth_deauthorize(self, token, method):
+        super()._oauth_deauthorize(
+            token, method, callback=self._oauth_ws.deauthorize)
 
     @login_lobby.route("/logout")
     def _oauth_logout(self):

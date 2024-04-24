@@ -10,7 +10,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 from utils import project_path, RouteLobby, secret_key
 from login import refresh_access
 from group import ismember
-from store import FKHeadless
+from store import ThreadDB
 from utils import relpath
 
 end_locals()
@@ -39,7 +39,8 @@ class Handshake:
 
     def __init__(self, root_path=None):
         self._root_path = root_path or project_path("run")
-        self.unix_path = self.root_path("refresh.sock")
+        self.server_unix_path = self.root_path("server.sock")
+        self.client_unix_path = self.root_path("client.sock")
 
     def root_path(self, *a):
         return os.path.join(self._root_path, *a)
@@ -159,7 +160,8 @@ class Handshake:
         return otp + g.finalize() + \
             self.key.sign(self.secret, otp[0x28:0x48], *self.signing_params) + \
             AESGCM(self.secret).encrypt(
-                otp[0x28:0x34], self.serialized_public(self.key.public_key()))
+                otp[0x28:0x34], self.serialized_public(self.key.public_key()),
+                None)
 
     # client: verifies the OTP is still valid
     #         verifies the OTP was generated with the shared secret
@@ -171,36 +173,43 @@ class Handshake:
         h.update(data[0x28:0x48])
         h.verify(data[0x48:0x68])
         public = self.save_public(AESGCM(self.secret).decrypt(
-            reply[0x28:0x34], reply[0x168:]))
-        public.verify(reply[0x68:0x168], reply[0x28:0x48])
+            reply[0x28:0x34], reply[0x168:], None))
+        public.verify(reply[0x68:0x168], reply[0x28:0x48], *self.signing_params)
         self.public = public
         return public
 
     def server_send(self, data):
-        return self.key.encrypt(self.now() + data)
+        nonce = os.urandom(12)
+        message = nonce + AESGCM(self.secret).encrypt(
+            nonce, self.now() + data.encode(), None)
+        signature = self.key.sign(message, *self.signing_params)
+        return signature + message
 
     def client_recieve(self, data):
-        data = self.public.decrypt(data)
+        self.public.verify(data[:0x100], data[0x100:], *self.signing_params)
+        data = AESGCM(self.secret).decrypt(
+            data[0x100:0x10C], data[0x10C:], None)
         self.timestamp_expiration(data)
-        return data[8:]
+        return data[8:].decode()
 
     def client_send(self, data):
         nonce = os.urandom(12)
-        return nonce + AESGCM(self.secret).encrypt(nonce, self.now() + data)
+        return nonce + AESGCM(self.secret).encrypt(
+            nonce, self.now() + data.encode(), None)
 
     def server_recieve(self, data):
-        data = AESGCM(self.secret).decrypt(data[:12], data[12:])
+        data = AESGCM(self.secret).decrypt(data[:12], data[12:], None)
         self.timestamp_expiration(data)
-        return data[8:]
+        return data[8:].decode()
 
     def server_sync(self, data):
         message = self.now()
-        signature = self.key.sign(message + data, *self.signing_params)
-        return message + signature + data
+        signature = self.key.sign(message + data.encode(), *self.signing_params)
+        return signature + message + data.encode()
 
     def server_verify(self, data):
         self.key.public_key().verify(
-            data[0x8:0x108], data[:8] + data[0x108:], *self.signing_params)
+            data[:0x100], data[0x100:], *self.signing_params)
         return self.server_send(data[0x108:])
 
 server_lobby = RouteLobby()
@@ -212,7 +221,6 @@ class ServerBP(Handshake):
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
         server_lobby.register_lobby(self.bp, self)
         self.keypair()
-        self.forkWS() # TODO
 
     def forkWS(self):
         ws = ServerWS(*self.a, root_path=self.root_path(), **self.kw)
@@ -236,37 +244,41 @@ class ServerBP(Handshake):
             "SELECT rowid, revoked_time, refresh, refresh_time "
             "FROM revoked WHERE revoked_time>?", (since,)))
 
-    async def send_deauthorize(self, revoked_time, refresh, refresh_time):
-        async with websockets.connect(self.unix_path) as websocket:
-            await websocket.send(self.server_sync(json.dumps(
-                [[revoked_time, refresh, refresh_time]])))
+    async def send_deauthorize(self, row, revoked_time, refresh, refresh_time):
+        async with websockets.unix_connect(self.server_unix_path) as websocket:
+            await websocket.send(json.dumps(
+                [[row, revoked_time, refresh, refresh_time]]))
 
-    def deauthorize(self, revoked_time, refresh, refresh_time):
-        asyncio.run(self.send_deauthorize(revoked_time, refresh, refresh_time))
+    def deauthorize(self, *a, **kw):
+        asyncio.run(self.send_deauthorize(*a, **kw))
 
 class WSHandshake(Handshake):
     _db = None
     def db(self):
         if self._db is None:
-            self._db = FKHeadless(
+            self._db = ThreadDB(
                 self.root_path("users.db"), relpath("schema.sql"))
         return self._db
 
 class ServerWS(WSHandshake):
     def __init__(
             self, host="localhost", port=8001, cache=None,
-            lease_timeout=3600*24, refresh_timeout=None, *,
-            root_path=None):
+            lease_timeout=3600*24, refresh_timeout=None, *, root_path=None):
         super().__init__(root_path)
         self.host, self.port = host, port
         self.cache, self.secondaries = cache, set()
         self.lease_timeout = lease_timeout
         self.refresh_timeout = refresh_timeout
 
+    _key = None
     @property
     def key(self):
         self.keypair()
-        return self.key
+        return self._key
+
+    @key.setter
+    def key(self, value):
+        self._key = value
 
     def refresh(self, auth):
         db = self.db().begin()
@@ -338,7 +350,8 @@ class ServerWS(WSHandshake):
 
     async def main(self):
         async with websockets.serve(self.router, self.host, self.port), \
-                websockets.unix_serve(self.local_primary, self.unix_path):
+                websockets.unix_serve(
+                    self.local_primary, self.server_unix_path):
             await asyncio.Future()
 
     def run(self):
@@ -360,9 +373,16 @@ class ClientWS(WSHandshake):
         return self._url + "/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
 
+    _public = None
     @property
     def public(self):
-        return self.load_public()
+        if self._public is None:
+            return self.load_public()
+        return self._public
+
+    @public.setter
+    def public(self, value):
+        self._public = value
 
     def load_public(self):
         if super().load_public():
@@ -373,7 +393,8 @@ class ClientWS(WSHandshake):
     def update(self):
         since = self.db().queryone("SELECT MAX(revoked_time) FROM revoked")[0]
         data = requests.post(
-            self.url("/updates"), self.otp(), params=since or {"since": since})
+            self.url("/updates"), self.otp(),
+            params=since and {"since": str(since)})
         self.revoke(json.loads(data.content))
 
     def revoke(self, info):
@@ -388,7 +409,7 @@ class ClientWS(WSHandshake):
             (refresh_time, refresh))
 
     async def io_hook(self, message, reply):
-        data = json.dumps(reply)
+        data = json.loads(reply)
         self.refresh_access(message, data)
 
     def router(self, message):
@@ -399,33 +420,34 @@ class ClientWS(WSHandshake):
         async def handler(ws):
             e = asyncio.Event()
             async for message in ws:
-                local.put((ws, message, e))
+                await q.put((ws, message, e))
                 await e.wait()
 
         async with websockets.connect(self.uri) as notify, \
                 websockets.connect(self.uri) as query, \
-                websockets.unix_serve(handler, self.unix_path):
+                websockets.unix_serve(handler, self.client_unix_path):
             await notify.send(self.otp())
             await query.send(self.otp())
-            remote, local = notify.recv(), q.get()
+            remote, local = list(map(
+                asyncio.create_task, [notify.recv(), q.get()]))
             await asyncio.to_thread(self.update)
 
             while True:
                 done, pending = await asyncio.wait(
-                    list(map(asyncio.create_task, [remote, local])),
-                    return_when=asyncio.FIRST_COMPLETED)
+                    [remote, local], return_when=asyncio.FIRST_COMPLETED)
                 done = next(iter(done))
                 if remote is done:
                     self.router(json.loads(self.client_recieve(done.result())))
-                    remote = notify.recv()
+                    remote = asyncio.create_task(notify.recv())
                 else:
+                    res = done.result()
                     ws, message, event = done.result()
                     await query.send(self.client_send(message))
                     reply = self.client_recieve(await query.recv())
-                    asyncio.to_thread(self.io_hook(message, reply))
+                    await self.io_hook(message, reply)
                     await ws.send(reply)
                     e.set()
-                    local = q.get()
+                    local = asyncio.create_task(q.get())
 
     def run(self):
         asyncio.run(self.listen())
@@ -434,11 +456,11 @@ class ClientBP(Handshake):
     def __init__(self, *a, root_path=None, **kw):
         super().__init__(root_path)
         self.a, self.kw = a, kw
-        self.forkWS() # TODO
 
     async def reload_access(self, refresh):
-        async with websockets.unix_connect(self.unix_path) as websocket:
-            return json.loads(await websocket.send(refresh))
+        async with websockets.unix_connect(self.client_unix_path) as websocket:
+            await websocket.send(refresh)
+            return json.loads(await websocket.recv())
 
     def refresh(self, refresh):
         return asyncio.run(self.reload_access(refresh))
@@ -451,7 +473,12 @@ class RemoteLoginBuilder:
     ...
 
 if __name__ == "__main__":
-    ClientWS(
+    ServerBP(None).forkWS()
+    bp = ClientBP(
         base_url="http://localhost:8000/login", uri="ws://localhost:8001",
-        root_path=project_path("run")).run()
+        root_path=project_path("run"))
+    bp.forkWS()
+    while True:
+        bp.refresh(input("refresh:"))
+
 
