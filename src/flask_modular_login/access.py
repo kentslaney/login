@@ -5,7 +5,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from login import authorized
 from utils import RouteLobby, CompressedUUID, data_payload
-from group import AccessGroup, GroupInfo, access_stack
+from group import AccessGroup, AccessGroupRef, GroupInfo, access_stack
 
 end_locals()
 
@@ -58,10 +58,16 @@ class AccessRoot:
         for group in self.groups:
             group.register(app)
 
-    def __call__(self, name, ownership_method=None, owner_id=None, sep="."):
+    def __call__(
+            self, name=None, ownership_method=None, owner_id=None, sep="/",
+            access_id=None):
+        assert name is not None or access_id is not None
         assert (ownership_method is None) == (owner_id is None)
         owner = owner_id and (ownership_method, owner_id)
-        return AccessGroup(name, GroupInfo(self.bind, self.db, owner, sep))
+        info = GroupInfo(self.bind, self.db, owner, sep)
+        if access_id is not None:
+            return AccessGroupRef(info, access_id)
+        return AccessGroup(name, info)
 
     def bind(self, group):
         self.groups.append(group)

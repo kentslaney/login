@@ -215,10 +215,13 @@ class Handshake:
 server_lobby = RouteLobby()
 
 class ServerBP(Handshake):
-    def __init__(self, db, *a, root_path=None, **kw):
+    def __init__(self, db, *a, remote=None, root_path=None, **kw):
         super().__init__(root_path)
         self.db, self.a, self.kw = db, a, kw
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
+        self.sock = (lambda: websockets.connect(remote)) if remote else \
+            (lambda: websockets.unix_connect(self.server_unix_path))
+        self.encoding = self.server_sync if remote else lambda x: x
         server_lobby.register_lobby(self.bp, self)
         self.keypair()
 
@@ -245,9 +248,10 @@ class ServerBP(Handshake):
             "FROM revoked WHERE revoked_time>?", (since,)))
 
     async def send_deauthorize(self, row, revoked_time, refresh, refresh_time):
-        async with websockets.unix_connect(self.server_unix_path) as websocket:
-            await websocket.send(json.dumps({"action": "deauthorize", "data": [[
-                row, revoked_time, refresh, refresh_time]]}))
+        async with self.sock() as websocket:
+            await websocket.send(self.encoding(json.dumps({
+                "action": "deauthorize",
+                "data": [[row, revoked_time, refresh, refresh_time]]})))
 
     def deauthorize(self, *a, **kw):
         asyncio.run(self.send_deauthorize(*a, **kw))
@@ -427,12 +431,6 @@ class ClientWS(WSHandshake):
             "INSERT INTO ignore(ref, revoked_time, refresh, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
 
-    @callback
-    def refresh(self, message, reply):
-        self.db().execute(
-            "UPDATE active SET refresh_time=? WHERE refresh=?",
-            (json.loads(reply), message["auth"]))
-
     async def io_hook(self, message, reply):
         data = json.loads(message)
         if data["action"] in callback:
@@ -483,15 +481,16 @@ class ClientWS(WSHandshake):
         asyncio.run(self.listen())
 
 class ClientBP(Handshake):
-    def __init__(self, *a, root_path=None, **kw):
+    def __init__(self, *a, local=False, root_path=None, **kw):
         super().__init__(root_path)
-        self.a, self.kw = a, kw
+        self.a, self.kw, self.unix_path = a, kw, \
+            self.server_unix_path if local else self.client_unix_path
         for k, v in actionable.items():
             setattr(self, k, staticmethod(
                 lambda **kw: asyncio.run(self._send(k, **kw))))
 
     async def _send(self, action, **kw):
-        async with websockets.unix_connect(self.client_unix_path) as websocket:
+        async with websockets.unix_connect(self.unix_path) as websocket:
             await websocket.send(json.dumps({"action": action, **kw}))
             return json.loads(await websocket.recv())
 

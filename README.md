@@ -230,10 +230,8 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ## TODOs
 - pub/sub group access queries
 - set the platforms via launch conditions
-- need a way to create an AccessGroup object via UUID or group name
-- construct group via UUID or name (optionally pathlib-like with / as sep)
 - lambda based group construction
-- local secondary via WS unix socket to interface with other languages/aiohttp
+- other language/aiohttp compat via secondary
 - build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
 - group add_user, remove_user, etc

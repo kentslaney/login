@@ -16,14 +16,18 @@ GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 # if init is a string, the output is flattened
 # the last element will have None as the UUID
 def access_stack(db, init, query, args=(), many=True):
+    init = (init if " " in init or "(" in init else (init,)) \
+        if type(init) is str else init
+    init, select = ((), init) if type(init) is str else \
+        (init, f"VALUES{','.join(('(?)',) * len(init))}")
     return db.many[many](
         "WITH RECURSIVE "
           "supersets(n) AS ("
-            "VALUES(?) "
+            f"{select} "
             "UNION ALL "
             "SELECT parent_group FROM access_groups, supersets "
             "WHERE access_id=supersets.n"
-          f") {query}", (init,) + args, True)
+          f") {query}", init + args, True)
 
 # group can be a root last stack
 # calls db.commit
@@ -55,8 +59,8 @@ class AccessGroup(OpShell):
         db = self.info.db(app).ctx.begin()
         parent = None if self.root else self.stack[-2].uuid
         access = db.queryone(
-            "SELECT parent_group, access_id FROM access_groups WHERE group_name=?",
-            (self.qualname,), True)
+            "SELECT parent_group, access_id FROM access_groups "
+            "WHERE group_name=?", (self.qualname,), True)
         uniq = str(uuid.uuid4()) if access is None else access.access_id
         if access is None or access.parent_group != parent:
             # update if the access_group structure has changed
@@ -106,4 +110,64 @@ class AccessGroup(OpShell):
 
     def __contains__(self, user):
         return bool(self.vet(None, user))
+
+    def __truediv__(self, other):
+        return AccessGroupRef(self.info, None, self, other)
+
+class AccessGroupRef(AccessGroup):
+    def __init__(self, info, access_id=None, source=None, *names):
+        self.info = info
+        assert access_id and not names or source and names
+        self._uuid, self.source, self.names = access_id, source, names
+
+    def db(self):
+        return self.info.db()
+
+    _name = None
+    @property
+    def qualname(self):
+        if self._name is None:
+            if self.source is not None:
+                self._name = self.source.qualname + self.info.sep + \
+                    self.info.sep.join(self.names)
+            else:
+                self._name = self.db().queryone(
+                    "SELECT group_name FROM access_groups WHERE uuid=?",
+                    (self.uuid,))
+                assert self._name is not None
+                self._name = self._name[0]
+        return self._name
+
+    @property
+    def uuid(self):
+        if self._uuid is None:
+            self._uuid = self.db().queryone(
+                "SELECT access_id FROM access_groups WHERE group_name=?",
+                (self.qualname,))
+            assert self._name is not None
+            self._name = self._name[0]
+        return self._uuid
+
+    _stack = None
+    @property
+    def stack(self):
+        if self._stack is None:
+            if len(self.names) == 1:
+                self._stack = [self.uuid] + self.source.stack
+            if self._uuid is None:
+                self._stack = access_stack(
+                    self.db(),
+                    "SELECT access_id FROM access_groups WHERE group_name=?",
+                    "SELECT n AS uuid FROM supersets", (self.qualname,))
+                assert len(self._stack) > 0
+                self._uuid = self._stack[0].uuid
+            else:
+                self._stack = access_stack(
+                    self.db(), self.uuid, "SELECT n AS uuid FROM supersets")
+        return self._stack
+
+    def __div__(self, other):
+        if self.source is None or self._stack is not None:
+            return AccessGroupRef(None, self, other)
+        return AccessGroupRef(None, self.source, *(self.names + [other]))
 
