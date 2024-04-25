@@ -228,7 +228,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- pub/sub JSON and group access queries
+- pub/sub group access queries
 - set the platforms via launch conditions
 - need a way to create an AccessGroup object via UUID or group name
 - construct group via UUID or name (optionally pathlib-like with / as sep)

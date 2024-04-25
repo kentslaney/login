@@ -6,8 +6,7 @@
     {% for session in active %}
         <div>
             <a target="_blank" href="https://ip.me/ip/{{ session['ip'] }}">
-                {{ session['ip'] }}
-            </a>
+                {{ session['ip'] }}</a>
             last seen at {{ session['authtime'] }}.
             {% if session['current'] %}
                 <a href="/login/logout">Logout</a> (current session)

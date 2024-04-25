@@ -1,5 +1,5 @@
 import flask, os, os.path, time, requests, websockets, json, asyncio, urllib
-import multiprocessing
+import multiprocessing, base64
 from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -222,7 +222,7 @@ class ServerBP(Handshake):
         server_lobby.register_lobby(self.bp, self)
         self.keypair()
 
-    def forkWS(self):
+    def _fork(self):
         ws = ServerWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
@@ -246,8 +246,8 @@ class ServerBP(Handshake):
 
     async def send_deauthorize(self, row, revoked_time, refresh, refresh_time):
         async with websockets.unix_connect(self.server_unix_path) as websocket:
-            await websocket.send(json.dumps(
-                [[row, revoked_time, refresh, refresh_time]]))
+            await websocket.send(json.dumps({"action": "deauthorize", "data": [[
+                row, revoked_time, refresh, refresh_time]]}))
 
     def deauthorize(self, *a, **kw):
         asyncio.run(self.send_deauthorize(*a, **kw))
@@ -259,6 +259,12 @@ class WSHandshake(Handshake):
             self._db = ThreadDB(
                 self.root_path("users.db"), relpath("schema.sql"))
         return self._db
+
+class FunctionList(dict):
+    def __call__(self, f):
+        self[f.__name__] = f
+
+actionable = FunctionList()
 
 class ServerWS(WSHandshake):
     def __init__(
@@ -280,15 +286,16 @@ class ServerWS(WSHandshake):
     def key(self, value):
         self._key = value
 
+    @actionable
     def refresh(self, auth):
         db = self.db().begin()
         cached = self.cache and self.cache.get(auth)
         if cached is None:
             timing = db.queryone(
-                "SELECT authtime, refresh_time FROM active "
-                "WHERE refresh=?", (auth,))
+                "SELECT authtime, refresh_time FROM active WHERE refresh=?",
+                (auth,))
             if timing is None:
-                return json.dumps([None, None])
+                return json.dumps(None)
             authtime, refresh_time = timing
         else:
             _, _, authtime, refresh_time = cached
@@ -297,7 +304,7 @@ class ServerWS(WSHandshake):
                 time.time()) - authtime > self.refresh_timeout:
             if cached is not None:
                 self.cache.delete(auth)
-            return json.dumps([None, None])
+            return json.dumps(None)
 
         updated, write, refresh_time = refresh_access(
             db, auth, refresh_time, self.lease_timeout,
@@ -316,9 +323,20 @@ class ServerWS(WSHandshake):
         db.close()
         return res
 
-    async def local_primary(self, ws):
+    async def local_primary(self, ws, init):
+        websockets.broadcast(self.secondaries, self.server_send(init))
         async for message in ws:
             websockets.broadcast(self.secondaries, self.server_send(message))
+
+    async def local_router(self, ws):
+        message = await ws.recv()
+        data = json.loads(message)
+        if data["action"] == "deauthorize":
+            await self.local_primary(ws, message)
+        else:
+            await ws.send(self.handler(message))
+            async for message in ws:
+                await ws.send(self.handler(message))
 
     def relay(self, message):
         websockets.broadcast(self.secondaries, self.server_verify(message))
@@ -329,37 +347,43 @@ class ServerWS(WSHandshake):
             self.relay(message)
 
     def handler(self, message):
-        return self.refresh(message)
+        data = json.loads(message)
+        action = data.pop("action")
+        assert action in actionable
+        return actionable[action](self, **data)
 
     async def secondary(self, ws, init):
-        self.server_timer(init)
-        self.secondaries.add(ws)
+        self.server_timer(base64.b64decode(init["data"]))
+        subscribed = init["action"] == "subscribe"
+        if subscribed:
+            self.secondaries.add(ws)
         try:
             async for message in ws:
                 refresh_token = self.handler(self.server_recieve(message))
                 await ws.send(self.server_send(refresh_token))
         finally:
-            self.secondaries.remove(ws)
+            if subscribed:
+                self.secondaries.remove(ws)
 
-    async def router(self, ws):
+    async def remote_router(self, ws):
         message = await ws.recv()
-        if len(message) == 0x28: # OTP length
-            await self.secondary(ws, message)
+        data = json.loads(message)
+        if data["action"] in ("subscribe", "establish"):
+            await self.secondary(ws, data)
         else:
             await self.remote_primary(ws, message)
 
     async def main(self):
-        async with websockets.serve(self.router, self.host, self.port), \
-                websockets.unix_serve(
-                    self.local_primary, self.server_unix_path):
+        async with websockets.serve(self.remote_router, self.host, self.port), \
+                websockets.unix_serve(self.local_router, self.server_unix_path):
             await asyncio.Future()
 
     def run(self):
         asyncio.run(self.main())
 
-class ClientWS(WSHandshake):
-    # TODO: json based messages
+callback = FunctionList()
 
+class ClientWS(WSHandshake):
     # TODO: maybe timeout after long silence and reconnect when a request hits
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
     # TODO: access queries
@@ -403,17 +427,19 @@ class ClientWS(WSHandshake):
             "INSERT INTO ignore(ref, revoked_time, refresh, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
 
-    def refresh_access(self, refresh, refresh_time):
+    @callback
+    def refresh(self, message, reply):
         self.db().execute(
             "UPDATE active SET refresh_time=? WHERE refresh=?",
-            (refresh_time, refresh))
+            (json.loads(reply), message["auth"]))
 
     async def io_hook(self, message, reply):
-        data = json.loads(reply)
-        self.refresh_access(message, data)
+        data = json.loads(message)
+        if data["action"] in callback:
+            callback[data["action"]](self, data, reply)
 
     def router(self, message):
-        return self.revoke(message)
+        return self.revoke(message["data"])
 
     async def listen(self):
         q = asyncio.Queue()
@@ -426,8 +452,12 @@ class ClientWS(WSHandshake):
         async with websockets.connect(self.uri) as notify, \
                 websockets.connect(self.uri) as query, \
                 websockets.unix_serve(handler, self.client_unix_path):
-            await notify.send(self.otp())
-            await query.send(self.otp())
+            await notify.send(json.dumps({
+                "action": "subscribe",
+                "data": base64.b64encode(self.otp()).decode()}))
+            await query.send(json.dumps({
+                "action": "establish",
+                "data": base64.b64encode(self.otp()).decode()}))
             remote, local = list(map(
                 asyncio.create_task, [notify.recv(), q.get()]))
             await asyncio.to_thread(self.update)
@@ -446,7 +476,7 @@ class ClientWS(WSHandshake):
                     reply = self.client_recieve(await query.recv())
                     await self.io_hook(message, reply)
                     await ws.send(reply)
-                    e.set()
+                    event.set()
                     local = asyncio.create_task(q.get())
 
     def run(self):
@@ -456,16 +486,16 @@ class ClientBP(Handshake):
     def __init__(self, *a, root_path=None, **kw):
         super().__init__(root_path)
         self.a, self.kw = a, kw
+        for k, v in actionable.items():
+            setattr(self, k, staticmethod(
+                lambda **kw: asyncio.run(self._send(k, **kw))))
 
-    async def reload_access(self, refresh):
+    async def _send(self, action, **kw):
         async with websockets.unix_connect(self.client_unix_path) as websocket:
-            await websocket.send(refresh)
+            await websocket.send(json.dumps({"action": action, **kw}))
             return json.loads(await websocket.recv())
 
-    def refresh(self, refresh):
-        return asyncio.run(self.reload_access(refresh))
-
-    def forkWS(self):
+    def _fork(self):
         ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
@@ -473,12 +503,11 @@ class RemoteLoginBuilder:
     ...
 
 if __name__ == "__main__":
-    ServerBP(None).forkWS()
+    ServerBP(None)._fork()
     bp = ClientBP(
         base_url="http://localhost:8000/login", uri="ws://localhost:8001",
         root_path=project_path("run"))
-    bp.forkWS()
+    bp._fork()
     while True:
-        bp.refresh(input("refresh:"))
-
+        bp.refresh(auth=input("refresh:"))
 
