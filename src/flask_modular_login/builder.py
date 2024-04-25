@@ -68,7 +68,9 @@ class LoginBuilder:
                     "picture": session_["picture"],
                 }
 
-    def vet(self, user, group, redirect=None, required=True):
+    def vet(self, user, group, redirect=None, required=True, kw=None):
+        if callable(group) and not isinstance(group, AccessGroup):
+            group = group(**{**({kw: user} if kw else {}), **request.view_args})
         permissions = group.vet(self.app, user["id"])
         # TODO: cache
         if permissions is None:
@@ -85,7 +87,7 @@ class LoginBuilder:
                 elif not isinstance(user, dict):
                     return user
                 if group is not None:
-                    user = self.vet(user, group, redirect, required)
+                    user = self.vet(user, group, redirect, required, kw)
                     if not isinstance(user, dict):
                         return user
                 if kw is None:

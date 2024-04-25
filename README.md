@@ -230,7 +230,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ## TODOs
 - pub/sub group access queries
 - set the platforms via launch conditions
-- lambda based group construction
 - other language/aiohttp compat via secondary
 - build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
@@ -255,4 +254,4 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 - caching in various places
 - ...unit tests (hopefully higher up please)
 - get a security audit from someone else
-
+}

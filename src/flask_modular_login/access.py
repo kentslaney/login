@@ -60,13 +60,13 @@ class AccessRoot:
 
     def __call__(
             self, name=None, ownership_method=None, owner_id=None, sep="/",
-            access_id=None):
-        assert name is not None or access_id is not None
+            access_id=None, qualname=None):
+        assert name is not None or access_id is not None or qualname is not None
         assert (ownership_method is None) == (owner_id is None)
         owner = owner_id and (ownership_method, owner_id)
         info = GroupInfo(self.bind, self.db, owner, sep)
-        if access_id is not None:
-            return AccessGroupRef(info, access_id)
+        if access_id is not None or qualname is not None:
+            return AccessGroupRef(info, access_id, qualname=qualname)
         return AccessGroup(name, info)
 
     def bind(self, group):

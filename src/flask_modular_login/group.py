@@ -10,11 +10,6 @@ end_locals()
 GroupInfo = collections.namedtuple("GroupInfo", ("bind", "db", "owner", "sep"))
 
 # returns stack of access groups going upwards from init
-# if extra is non empty, it also queries those columns
-# if querying extra, expects init to be a tuple with those columns after
-# if extra is empty, init can also be a string
-# if init is a string, the output is flattened
-# the last element will have None as the UUID
 def access_stack(db, init, query, args=(), many=True):
     init = (init if " " in init or "(" in init else (init,)) \
         if type(init) is str else init
@@ -30,7 +25,6 @@ def access_stack(db, init, query, args=(), many=True):
           f") {query}", init + args, True)
 
 # group can be a root last stack
-# calls db.commit
 def ismember(db, user, group):
     return access_stack(
         db, group, "SELECT guild, access_group FROM user_groups WHERE "
@@ -115,15 +109,15 @@ class AccessGroup(OpShell):
         return AccessGroupRef(self.info, None, self, other)
 
 class AccessGroupRef(AccessGroup):
-    def __init__(self, info, access_id=None, source=None, *names):
-        self.info = info
+    def __init__(
+            self, info, access_id=None, source=None, *names, qualname=None):
+        self.info, self._name = info, qualname
         assert access_id and not names or source and names
         self._uuid, self.source, self.names = access_id, source, names
 
     def db(self):
         return self.info.db()
 
-    _name = None
     @property
     def qualname(self):
         if self._name is None:
@@ -153,8 +147,9 @@ class AccessGroupRef(AccessGroup):
     def stack(self):
         if self._stack is None:
             if len(self.names) == 1:
-                self._stack = [self.uuid] + self.source.stack
-            if self._uuid is None:
+                access_id = type("AccessRef", (), {"uuid": self.uuid})()
+                self._stack = [access_id] + self.source.stack
+            elif self._uuid is None:
                 self._stack = access_stack(
                     self.db(),
                     "SELECT access_id FROM access_groups WHERE group_name=?",
