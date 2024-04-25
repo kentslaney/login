@@ -286,7 +286,18 @@ class OpShell:
     def __repr__(self):
         if self._op is None:
             return super().__repr__() if self._on is self else repr(self._on)
-        return self._op_symbols[self._op.__func__](self._on, *self._op_args)
+        return self._op_symbols[self._op.__func__](
+            repr(self._on), *map(repr, self._op_args))
+
+    def rpn(self):
+        if self._op is None:
+            return super().__str__() if self._on is self else str(self._on)
+        return [
+            f"__{self._op.__func__.__name__.replace('_', '')}__",
+            *map(lambda x: x.rpn(), [self._on, *self._op_args])]
+
+    def __str__(self):
+        return json.dumps(self.rpn())
 
 class OpShell(OpShell):
     def __init__(self):

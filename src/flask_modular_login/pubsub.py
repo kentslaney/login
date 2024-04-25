@@ -12,6 +12,7 @@ from login import refresh_access
 from group import ismember
 from store import ThreadDB
 from utils import relpath
+from builder import LoginBuilder
 
 end_locals()
 
@@ -498,8 +499,8 @@ class ClientBP(Handshake):
         ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
-class RemoteLoginBuilder:
-    ...
+class RemoteLoginBuilder(LoginBuilder):
+    pass
 
 if __name__ == "__main__":
     ServerBP(None)._fork()

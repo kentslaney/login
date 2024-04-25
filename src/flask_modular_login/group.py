@@ -138,8 +138,8 @@ class AccessGroupRef(AccessGroup):
             self._uuid = self.db().queryone(
                 "SELECT access_id FROM access_groups WHERE group_name=?",
                 (self.qualname,))
-            assert self._name is not None
-            self._name = self._name[0]
+            assert self._uuid is not None
+            self._uuid = self._uuid[0]
         return self._uuid
 
     _stack = None
@@ -165,4 +165,8 @@ class AccessGroupRef(AccessGroup):
         if self.source is None or self._stack is not None:
             return AccessGroupRef(None, self, other)
         return AccessGroupRef(None, self.source, *(self.names + [other]))
+
+def reconstruct(rpn, f):
+    args = [reconstruct(i) if type(i) is list else f(i) for i in rpn[1:]]
+    return getattr(args[0], rpn[0])(*args[1:])
 

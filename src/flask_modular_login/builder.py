@@ -68,10 +68,13 @@ class LoginBuilder:
                     "picture": session_["picture"],
                 }
 
+    def membership(self, group, user):
+        return group.vet(self.app, user)
+
     def vet(self, user, group, redirect=None, required=True, kw=None):
         if callable(group) and not isinstance(group, AccessGroup):
             group = group(**{**({kw: user} if kw else {}), **request.view_args})
-        permissions = group.vet(self.app, user["id"])
+        permissions = self.membership(group, user["id"])
         # TODO: cache
         if permissions is None:
             return self.bounce(redirect, group) if required else user
