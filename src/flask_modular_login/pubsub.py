@@ -509,5 +509,7 @@ if __name__ == "__main__":
         root_path=project_path("run"))
     bp._fork()
     while True:
-        bp.refresh(auth=input("refresh:"))
+        message = input("send action [argv 0] JSON [rest]: ").split(" ", 1)
+        message = message if len(message) == 2 else message + ["{}"]
+        print(bp._send(message[0], **json.loads(message[1])))
 
