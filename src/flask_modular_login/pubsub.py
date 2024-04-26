@@ -9,7 +9,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from utils import project_path, RouteLobby, secret_key
 from login import refresh_access
-from group import ismember
+from group import AccessGroupRef
 from store import ThreadDB
 from utils import relpath
 from builder import LoginBuilder
@@ -320,13 +320,16 @@ class ServerWS(WSHandshake):
             db.commit()
         db.close()
 
-        return json.dumps(refresh_time)
+        return refresh_time
 
-    def access_query(self, user, access_group):
+    @actionable
+    def access_query(self, user, access_group, sep='/'):
         db = self.db().begin()
-        res = json.dumps(ismember(db, user, access_group))
-        db.close()
-        return res
+        try:
+            return user in AccessGroupRef.reconstruct(
+                lambda: db, access_group, sep)
+        finally:
+            db.close()
 
     async def local_primary(self, ws, init):
         websockets.broadcast(self.secondaries, self.server_send(init))
@@ -355,7 +358,7 @@ class ServerWS(WSHandshake):
         data = json.loads(message)
         action = data.pop("action")
         assert action in actionable
-        return actionable[action](self, **data)
+        return json.dumps(actionable[action](self, **data))
 
     async def secondary(self, ws, init):
         self.server_timer(base64.b64decode(init["data"]))
@@ -391,7 +394,6 @@ callback = FunctionList()
 class ClientWS(WSHandshake):
     # TODO: maybe timeout after long silence and reconnect when a request hits
     # TODO: add versioning to messages/events to allow upgrades w/o downtime
-    # TODO: access queries
 
     def __init__(self, base_url, uri, cache=None, *, root_path=None):
         super().__init__(root_path)
@@ -500,7 +502,9 @@ class ClientBP(Handshake):
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
 class RemoteLoginBuilder(LoginBuilder):
-    pass
+    # base_url via prefix
+    def membership(self, group, user):
+        super().membership(group, user)
 
 if __name__ == "__main__":
     ServerBP(None)._fork()
@@ -511,5 +515,5 @@ if __name__ == "__main__":
     while True:
         message = input("send action [argv 0] JSON [rest]: ").split(" ", 1)
         message = message if len(message) == 2 else message + ["{}"]
-        print(bp._send(message[0], **json.loads(message[1])))
+        print(asyncio.run(bp._send(message[0], **json.loads(message[1]))))
 

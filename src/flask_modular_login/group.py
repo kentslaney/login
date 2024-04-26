@@ -1,4 +1,4 @@
-import collections, uuid
+import collections, uuid, json
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
@@ -25,11 +25,11 @@ def access_stack(db, init, query, args=(), many=True):
           f") {query}", init + args, True)
 
 # group can be a root last stack
-def ismember(db, user, group):
+def ismember(db, user, group, args=()):
     return access_stack(
         db, group, "SELECT guild, access_group FROM user_groups WHERE "
         "access_group IN supersets AND member=? AND active=1 AND "
-        "(until IS NULL or until>unixepoch())", (user,), False)
+        "(until IS NULL or until>unixepoch())", args + (user,), False)
 
 class AccessGroup(OpShell):
     def __init__(self, name, info, stack=None):
@@ -106,17 +106,26 @@ class AccessGroup(OpShell):
         return bool(self.vet(None, user))
 
     def __truediv__(self, other):
-        return AccessGroupRef(self.info, None, self, other)
+        return AccessGroupRef(self.info.db, self.info.sep, None, self, other)
 
 class AccessGroupRef(AccessGroup):
     def __init__(
-            self, info, access_id=None, source=None, *names, qualname=None):
-        self.info, self._name = info, qualname
-        assert access_id and not names or source and names
+            self, db, sep='/', access_id=None, source=None, *names,
+            qualname=None):
+        self.db, self.sep, self._name = db, sep, qualname
+        assert access_id and not names or source and names or qualname
         self._uuid, self.source, self.names = access_id, source, names
 
-    def db(self):
-        return self.info.db()
+    def __contains__(self, user):
+        if self.source is not None and self.names or self._name:
+            return bool(ismember(
+                self.db(), user,
+                "SELECT access_id FROM access_groups WHERE group_name=?",
+                (self.qualname,)))
+        elif self._stack is None and self._uuid is not None:
+            return bool(ismember(self.db(), user, self.uuid))
+        else:
+            return super().__contains__(user)
 
     @property
     def qualname(self):
@@ -163,10 +172,23 @@ class AccessGroupRef(AccessGroup):
 
     def __div__(self, other):
         if self.source is None or self._stack is not None:
-            return AccessGroupRef(None, self, other)
-        return AccessGroupRef(None, self.source, *(self.names + [other]))
+            return AccessGroupRef(self.db, self.sep, None, self, other)
+        return AccessGroupRef(
+                self.db, self.sep, None, self.source, *(self.names + [other]))
 
-def reconstruct(rpn, f):
-    args = [reconstruct(i) if type(i) is list else f(i) for i in rpn[1:]]
-    return getattr(args[0], rpn[0])(*args[1:])
+    @classmethod
+    def reconstruct(cls, db, rpn, sep='/'):
+        def f(el):
+            return cls(db, sep, qualname=el)
+        if isinstance(rpn, str):
+            if '"' in rpn:
+                rpn = json.loads(rpn)
+            else:
+                return f(rpn)
+        assert isinstance(rpn, list)
+
+        def inner(el):
+            return [inner(i) if type(i) is list else f(i) for i in el[1:]]
+        args = inner(rpn)
+        return getattr(args[0], rpn[0])(*args[1:])
 

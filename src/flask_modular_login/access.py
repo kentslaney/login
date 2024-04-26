@@ -66,7 +66,7 @@ class AccessRoot:
         owner = owner_id and (ownership_method, owner_id)
         info = GroupInfo(self.bind, self.db, owner, sep)
         if access_id is not None or qualname is not None:
-            return AccessGroupRef(info, access_id, qualname=qualname)
+            return AccessGroupRef(self.db, sep, access_id, qualname=qualname)
         return AccessGroup(name, info)
 
     def bind(self, group):

@@ -214,7 +214,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
                /                   |       /                   |
               /                    |      /                    |
 +-------------+             +-------------+             +-------------+
-|  server BP  |             |login builder|             |  client BP  |
+|  server BP  |             |login builder| <-?merge?-> |  client BP  |
 +-------------+             |  interface  |             +-------------+
                \__          +-------------+                    |
                   \_               |                           |
@@ -228,14 +228,12 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- pub/sub group access queries
+- group add_user, remove_user, etc; WS register group, ensure on first user
 - set the platforms via launch conditions
 - other language/aiohttp compat via secondary
 - build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
-- group add_user, remove_user, etc
 - linked accounts
-- RemoteLoginBuilder needs to implement access group creation/adding users/etc
 - check path interface consitency (pub/sub, memcached, secret_key)
 - what happens with multiple login_optional/login_required in a row?
 - consistent indentation between if statements and others
