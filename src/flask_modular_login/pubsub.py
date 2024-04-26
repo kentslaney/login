@@ -255,7 +255,10 @@ class ServerBP(Handshake):
                 "data": [[row, revoked_time, refresh, refresh_time]]})))
 
     def deauthorize(self, *a, **kw):
-        asyncio.run(self.send_deauthorize(*a, **kw))
+        try:
+            asyncio.run(self.send_deauthorize(*a, **kw))
+        except ConnectionRefusedError:
+            pass
 
 class WSHandshake(Handshake):
     _db = None
@@ -324,12 +327,13 @@ class ServerWS(WSHandshake):
 
     @actionable
     def access_query(self, user, access_group, sep='/'):
-        db = self.db().begin()
-        try:
-            return user in AccessGroupRef.reconstruct(
-                lambda: db, access_group, sep)
-        finally:
-            db.close()
+        return user in AccessGroupRef.reconstruct(self.db, access_group, sep)
+
+    @actionable
+    def ensure_access(self, access_group, sep='/', owner=None):
+        group = AccessGroupRef.reconstruct(self.db, access_group, sep, owner)
+        group.ensure()
+        return group.uuid
 
     async def local_primary(self, ws, init):
         websockets.broadcast(self.secondaries, self.server_send(init))

@@ -23,7 +23,7 @@ CREATE TABLE revoked (
     authtime FLOAT,
     refresh_time FLOAT
 );
-CREATE UNIQUE INDEX removed ON revoked(refresh);
+CREATE INDEX removed ON revoked(refresh);
 CREATE TABLE ignore (
     ref INT,
     revoked_time FLOAT,

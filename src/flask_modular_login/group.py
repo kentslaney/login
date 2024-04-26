@@ -50,7 +50,10 @@ class AccessGroup(OpShell):
         return self.qualname
 
     def register(self, app):
-        db = self.info.db(app).ctx.begin()
+        self.ensure(self.info.db(app).ctx.begin())
+
+    def ensure(self, db=None):
+        db = db or self.info.db().begin()
         parent = None if self.root else self.stack[-2].uuid
         access = db.queryone(
             "SELECT parent_group, access_id FROM access_groups "
@@ -111,11 +114,16 @@ class AccessGroup(OpShell):
 class AccessGroupRef(AccessGroup):
     def __init__(
             self, db, sep='/', access_id=None, source=None, *names,
-            qualname=None):
+            qualname=None, owner=None):
         self.db, self.sep, self._name = db, sep, qualname
-        self.info = GroupInfo(None, db, None, sep)
-        assert access_id and not names or source and names or qualname
+        self.info = GroupInfo(None, lambda *a, **kw: db(), owner, sep)
+        assert access_id and not names or names or qualname and not source
         self._uuid, self.source, self.names = access_id, source, names
+        if self._name is not None:
+            prefix = self._name.split(sep)
+            if self.names:
+                self._name = None
+            self.names = tuple(prefix) + self.names
 
     def __contains__(self, user):
         if self.source is not None and self.names or self._name:
@@ -131,9 +139,10 @@ class AccessGroupRef(AccessGroup):
     @property
     def qualname(self):
         if self._name is None:
-            if self.source is not None:
-                self._name = self.source.qualname + self.info.sep + \
-                    self.info.sep.join(self.names)
+            if self.names:
+                self._name = self.info.sep.join(self.names)
+                if self.source is not None:
+                    self._name = self.source.qualname + self.sep + self._name
             else:
                 self._name = self.db().queryone(
                     "SELECT group_name FROM access_groups WHERE uuid=?",
@@ -148,17 +157,23 @@ class AccessGroupRef(AccessGroup):
             self._uuid = self.db().queryone(
                 "SELECT access_id FROM access_groups WHERE group_name=?",
                 (self.qualname,))
-            assert self._uuid is not None
-            self._uuid = self._uuid[0]
+            if self._uuid is not None:
+                self._uuid = self._uuid[0]
         return self._uuid
 
+    @uuid.setter
+    def uuid(self, value):
+        self._uuid = value
+        if self._stack is not None:
+            self._stack[0] = self.access_ref()
+
+    access_ref = lambda self: type("AccessRef", (), {"uuid": self.uuid})()
     _stack = None
     @property
     def stack(self):
         if self._stack is None:
-            if len(self.names) == 1:
-                access_id = type("AccessRef", (), {"uuid": self.uuid})()
-                self._stack = [access_id] + self.source.stack
+            if len(self.names) == 1 and self.source is not None:
+                self._stack = [self.access_ref()] + self.source.stack
             elif self._uuid is None:
                 self._stack = access_stack(
                     self.db(),
@@ -171,16 +186,23 @@ class AccessGroupRef(AccessGroup):
                     self.db(), self.uuid, "SELECT n AS uuid FROM supersets")
         return self._stack
 
+    _root = None;
+    @property
+    def root(self):
+        if self._root is None:
+            self._root = self.source is None and len(self.names) == 1
+        return self._root
+
     def __truediv__(self, other):
         if self.source is None or self._stack is not None:
-            return AccessGroupRef(self.db, self.sep, None, self, other)
-        return AccessGroupRef(
-            self.db, self.sep, None, self.source, *(self.names + [other]))
+            return __class__(self.db, self.sep, None, self, other)
+        return __class__(
+            self.db, self.sep, None, self.source, *(self.names + (other,)))
 
     @classmethod
-    def reconstruct(cls, db, rpn, sep='/'):
+    def reconstruct(cls, db, rpn, sep='/', owner=None):
         def f(el):
-            return cls(db, sep, qualname=el)
+            return cls(db, sep, qualname=el, owner=owner)
         if isinstance(rpn, str):
             if '"' in rpn:
                 rpn = json.loads(rpn)
@@ -192,4 +214,14 @@ class AccessGroupRef(AccessGroup):
             return [inner(i) if type(i) is list else f(i) for i in el[1:]]
         args = inner(rpn)
         return getattr(args[0], rpn[0])(*args[1:])
+
+    def ensure(self, db=None):
+        if len(self.names) > 1:
+            self.source = __class__(
+                self.db, self.sep, None, self.source, *self.names[:-1],
+                owner=self.info.owner)
+            self.names = (self.names[-1],)
+        if self.source is not None:
+            self.source.ensure(db)
+        super().ensure(db)
 

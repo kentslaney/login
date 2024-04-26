@@ -227,7 +227,8 @@ class OpShell:
 
     def generic(self, f, *a, **kw):
         if self._op is None:
-            assert getattr(self._on.__class__, f, None) != getattr(__class__, f, None)
+            assert getattr(self._on.__class__, f, None) != getattr(
+                __class__, f, None)
         def wrapper(*a, **kw):
             if self._op is None:
                 return getattr(self._on, f)(*a, **kw)
