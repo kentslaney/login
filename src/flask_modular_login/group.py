@@ -113,6 +113,7 @@ class AccessGroupRef(AccessGroup):
             self, db, sep='/', access_id=None, source=None, *names,
             qualname=None):
         self.db, self.sep, self._name = db, sep, qualname
+        self.info = GroupInfo(None, db, None, sep)
         assert access_id and not names or source and names or qualname
         self._uuid, self.source, self.names = access_id, source, names
 

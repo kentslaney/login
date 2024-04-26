@@ -73,7 +73,7 @@ class LoginBuilder:
 
     def vet(self, user, group, redirect=None, required=True, kw=None):
         if callable(group) and not isinstance(group, AccessGroup):
-            group = group(**{**({kw: user} if kw else {}), **request.view_args})
+            group = group(**kw)
         permissions = self.membership(group, user["id"])
         # TODO: cache
         if permissions is None:
@@ -90,7 +90,8 @@ class LoginBuilder:
                 elif not isinstance(user, dict):
                     return user
                 if group is not None:
-                    user = self.vet(user, group, redirect, required, kw)
+                    group_args = {**({kw: user} if kw else {}), **kwargs}
+                    user = self.vet(user, group, redirect, required, group_args)
                     if not isinstance(user, dict):
                         return user
                 if kw is None:
@@ -107,7 +108,8 @@ class LoginBuilder:
             if not isinstance(res, dict):
                 return res
             elif group is not None:
-                res = self.vet(res, group, redirect, required)
+                res = self.vet(
+                    res, group, redirect, required, kw=flask.request.view_args)
                 if not isinstance(res, dict):
                     return res
             self.g = res
