@@ -203,24 +203,28 @@ def data_payload(value, template, parsed=True):
 class OpShell:
     _op_on, _op, _op_args = None, None, ()
 
+    symbols = (
+        ("_and", lambda l, r: f"({l} AND {r})"),
+        ("_or", lambda l, r: f"({l} OR {r})"),
+        ("_xor", lambda l, r: f"({l} XOR {r})"),
+        ("_invert", lambda x: f"NOT {x}"),
+    )
+
+    @property
+    def _shell(self):
+        return __class__
+
     def __init__(self, this=None, op=None, *a):
         self._op_on, self._op, self._op_args = this, op, a
-
-        symbols = {
-            "_and": lambda l, r: f"({l} AND {r})",
-            "_or": lambda l, r: f"({l} OR {r})",
-            "_xor": lambda l, r: f"({l} XOR {r})",
-            "_invert": lambda x: f"NOT {x}",
-        }
         self._op_symbols = {
-            getattr(__class__, k): v for k, v in symbols.items()}
+            getattr(self.__class__, k): v for k, v in self.symbols}
 
     @property
     def _on(self):
         return self if self._op_on is None else self._op_on
 
     def __contains__(self, user):
-        return self.generic("__contains__")(user)
+        return bool(self.generic("__contains__")(user))
 
     def __getattr__(self, name):
         return self.generic(name)
@@ -228,7 +232,7 @@ class OpShell:
     def generic(self, f, *a, **kw):
         if self._op is None:
             assert getattr(self._on.__class__, f, None) != getattr(
-                __class__, f, None)
+                self._shell, f, None)
         def wrapper(*a, **kw):
             if self._op is None:
                 return getattr(self._on, f)(*a, **kw)
@@ -242,13 +246,13 @@ class OpShell:
         return self if self._op is None else abs(self)
 
     def __abs__(self):
-        return __class__(self, self._op, *self._op_args)
+        return self._shell(self, self._op, *self._op_args)
 
     def _and(self, f, other, *a, **kw):
-        return getattr(self._on, f)(*a, **kw) and getattr(other, f)(*a, **kw)
+        return getattr(self, f)(*a, **kw) and getattr(other, f)(*a, **kw)
 
     def __and__(self, other):
-        return __class__(self, self._and, other)
+        return self._shell(self, self._and, other)
 
     def __iand__(self, other):
         this = +self
@@ -256,10 +260,10 @@ class OpShell:
         return this
 
     def _or(self, f, other, *a, **kw):
-        return getattr(self._on, f)(*a, **kw) or getattr(other, f)(*a, **kw)
+        return getattr(self, f)(*a, **kw) or getattr(other, f)(*a, **kw)
 
     def __or__(self, other):
-        return __class__(self, self._or, other)
+        return self._shell(self, self._or, other)
 
     def __ior__(self, other):
         this = +self
@@ -268,10 +272,10 @@ class OpShell:
 
     def _xor(self, f, other, *a, **kw):
         return bool(
-            getattr(self._on, f)(*a, **kw) ^ getattr(other, f)(*a, **kw))
+            getattr(self, f)(*a, **kw) ^ getattr(other, f)(*a, **kw))
 
     def __xor__(self, other):
-        return __class__(self, self._xor, other)
+        return self._shell(self, self._xor, other)
 
     def __ixor__(self, other):
         this = +self
@@ -279,10 +283,10 @@ class OpShell:
         return this
 
     def _invert(self, *a, **kw):
-        return not getattr(self._on, f)(*a, **kw)
+        return not getattr(self, f)(*a, **kw)
 
     def __invert__(self):
-        return __class__(self, self._invert)
+        return self._shell(self, self._invert)
 
     def __repr__(self):
         if self._op is None:
@@ -300,9 +304,35 @@ class OpShell:
     def __str__(self):
         return json.dumps(self.rpn())
 
-class OpShell(OpShell):
-    def __init__(self):
-        pass
+class FlatInfo(tuple):
+    pass
+
+class InfoShell(OpShell):
+    @property
+    def _shell(self):
+        return __class__
+
+    def __init__(self, this=None, op=None, *a):
+        # TODO: could be distributive
+        assert op.__func__.__name__ == "_add" or (
+            this._op is None or this._op.__func__.__name__ != "_add") and (
+            not a or a[0]._op is None or
+            a[0]._op.__func__.__name__ != "_add")
+        self.symbols += ("_add", lambda l, r: f"({l} ADD {r})"),
+        super().__init__(this, op, *a)
+
+    def _add(self, f, other, *a, **kw):
+        res = (getattr(self, f)(*a, **kw), getattr(other, f)(*a, **kw))
+        return FlatInfo(
+            j for i in res for j in (i if isinstance(i, FlatInfo) else (i,)))
+
+    def __add__(self, other):
+        return self._shell(self, self._add, other)
+
+    def __iadd__(self, other):
+        this = +self
+        this._op, this._op_args = (-this)._add, (other,)
+        return this
 
 class OpShellTest(OpShell):
     def __init__(self, lo, hi):

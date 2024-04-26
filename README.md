@@ -234,7 +234,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 - option to auto-redirect to QR code link on first login if not at /qr
 - linked accounts
 - check path interface consitency (pub/sub, memcached, secret_key)
-- __plus__ or nested decorators for via info on multiple groups
+- RemoteLoginBuilder
 - consistent indentation between if statements and others
 - purge access tokens from remote clients after they're stale
 - invite option to limit sharing by total use time?

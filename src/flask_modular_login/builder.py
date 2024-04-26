@@ -19,6 +19,9 @@ app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
 app.config["TIMEOUTS"] = (3600 * 24, 3600 * 24 * 90)
 
+class PermissionsWrapper(tuple):
+    pass
+
 class LoginBuilder:
     def __init__(self, app=app, prefix=None, g_attr="user"):
         self.app = app
@@ -69,16 +72,20 @@ class LoginBuilder:
                 }
 
     def membership(self, group, user):
-        return group.vet(self.app, user)
+        return group.vet(user)
 
     def vet(self, user, group, redirect=None, required=True, kw=None):
         if callable(group) and not isinstance(group, AccessGroup):
             group = group(**kw)
         permissions = self.membership(group, user["id"])
         # TODO: cache
-        if permissions is None:
-            return self.bounce(redirect, group) if required else user
-        return {**user, "via": dict(zip(("group", "membership"), permissions))}
+        if permissions is None and required:
+            return self.bounce(redirect, group)
+        if self.g is not None:
+            permissions = PermissionsWrapper(sum(map(
+                lambda x: x if isinstance(x, PermissionsWrapper) else (x,),
+                (self.g["via"], permissions)), PermissionsWrapper()))
+        return {**user, "via": permissions}
 
     def decorate(self, kw=None, required=True, group=None, redirect=None):
         def decorator(f):
@@ -90,15 +97,12 @@ class LoginBuilder:
                 elif not isinstance(user, dict):
                     return user
                 if group is not None:
-                    group_args = {**({kw: user} if kw else {}), **kwargs}
+                    group_args = {**kwargs, **({kw: user} if kw else {})}
                     user = self.vet(user, group, redirect, required, group_args)
                     if not isinstance(user, dict):
                         return user
-                if kw is None:
-                    self.g = user
-                    return f(*args, **kwargs)
-                else:
-                    return f(*args, **{kw: user, **kwargs})
+                self.g = user
+                return f(*args, **{**kwargs, **({kw: user} if kw else {})})
             return wrapper
         return decorator
 

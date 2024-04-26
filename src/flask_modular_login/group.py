@@ -3,7 +3,7 @@ import collections, uuid, json
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from utils import OpShell
+from utils import InfoShell
 
 end_locals()
 
@@ -31,7 +31,7 @@ def ismember(db, user, group, args=()):
         "access_group IN supersets AND member=? AND active=1 AND "
         "(until IS NULL or until>unixepoch())", args + (user,), False)
 
-class AccessGroup(OpShell):
+class AccessGroup(InfoShell):
     def __init__(self, name, info, stack=None):
         self.info = info
         assert info.sep not in name
@@ -110,19 +110,20 @@ class AccessGroup(OpShell):
         return res
 
     def db(self, app=None):
-        return self.info.db(app).ctx
+        return self.info.db() if app is None else self.info.db(app).ctx
 
     # TODO: strict ordering (see Google Zanzibar) using read/write decorators?
-    def vet(self, app, user):
+    def vet(self, user, app=None):
         db = self.db(app).begin()
         res = ismember(db, user, tuple(reversed([i.uuid for i in self.stack])))
         db.close()
         return res
 
     def __contains__(self, user):
-        return bool(self.vet(None, user))
+        return bool(self.vet(user))
 
     def __truediv__(self, other):
+        assert isinstance(other, str)
         return AccessGroupRef(self.info.db, self.info.sep, None, self, other)
 
     def add_user(self, user):
@@ -215,6 +216,7 @@ class AccessGroupRef(AccessGroup):
         return self._root
 
     def __truediv__(self, other):
+        assert isinstance(other, str)
         if self.source is None or self._stack is not None:
             return __class__(self.db, self.sep, None, self, other)
         return __class__(
