@@ -335,6 +335,16 @@ class ServerWS(WSHandshake):
         group.ensure()
         return group.uuid
 
+    @actionable
+    def add_access(self, user, access_group, sep='/'):
+        return AccessGroupRef.reconstruct(
+            self.db, access_group, sep).add_user(user)
+
+    @actionable
+    def remove_access(self, guild):
+        return self.db().execute(
+            "UPDATE user_groups SET active=0 WHERE guild=?", (guild,))
+
     async def local_primary(self, ws, init):
         websockets.broadcast(self.secondaries, self.server_send(init))
         async for message in ws:
@@ -491,9 +501,9 @@ class ClientBP(Handshake):
         super().__init__(root_path)
         self.a, self.kw, self.unix_path = a, kw, \
             self.server_unix_path if local else self.client_unix_path
-        for k, v in actionable.items():
-            setattr(self, k, staticmethod(
-                lambda **kw: asyncio.run(self._send(k, **kw))))
+        for k in actionable.keys():
+            setattr(self, k, lambda k: staticmethod(
+                lambda **kw: asyncio.run(self._send(k, **kw)))(k))
 
     async def _send(self, action, **kw):
         async with websockets.unix_connect(self.unix_path) as websocket:

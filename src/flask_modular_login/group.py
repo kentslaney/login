@@ -50,10 +50,13 @@ class AccessGroup(OpShell):
         return self.qualname
 
     def register(self, app):
-        self.ensure(self.info.db(app).ctx.begin())
+        db = self.db(app).begin()
+        self.ensure(db)
+        db.close()
 
-    def ensure(self, db=None):
-        db = db or self.info.db().begin()
+    def ensure(self, db):
+        if self.uuid is not None:
+            return
         parent = None if self.root else self.stack[-2].uuid
         access = db.queryone(
             "SELECT parent_group, access_id FROM access_groups "
@@ -83,24 +86,35 @@ class AccessGroup(OpShell):
             else:
                 owner = owner[0]
                 changed = db.queryone(
-                    "SELECT 1 FROM user_groups WHERE via IS NULL AND "
-                    "until IS NULL AND spots IS NULL AND active=1 AND "
-                    "member=? AND access_group=?", (owner, self.uuid)) is None
+                    "SELECT 1 FROM user_groups LEFT JOIN invitations "
+                    "ON via=invite WHERE until IS NULL AND spots IS NULL AND "
+                    "user_groups.active=1 AND member=? AND access_group=? AND "
+                    "deauthorizes=2", (owner, self.uuid)) is None
             if changed:
+                invite = str(uuid.uuid4())
                 db.execute(
-                    "INSERT INTO user_groups(guild, member, access_group) "
-                    "VALUES (?, ?, ?)", (str(uuid.uuid4()), owner, self.uuid))
-        db.commit().close()
+                    "INSERT INTO invitations"
+                    "(invite, accessing, inviter, depletes, deauthorizes) "
+                    "VALUES (?, ?, NULL, FALSE, 2)", (invite, self.uuid))
+                db.execute(
+                    "INSERT INTO user_groups"
+                    "(guild, via, member, access_group, spots) "
+                    "VALUES (?, ?, ?, ?, NULL)",
+                    (str(uuid.uuid4()), invite, owner, self.uuid))
+        db.commit()
 
     def shallow(self, app, user):
-        db = self.info.db(app).begin()
+        db = self.db(app).begin()
         res = ismember(db, user, [self.uuid])
         db.close()
         return res
 
+    def db(self, app=None):
+        return self.info.db(app).ctx
+
     # TODO: strict ordering (see Google Zanzibar) using read/write decorators?
     def vet(self, app, user):
-        db = self.info.db(app).begin()
+        db = self.db(app).begin()
         res = ismember(db, user, tuple(reversed([i.uuid for i in self.stack])))
         db.close()
         return res
@@ -110,6 +124,13 @@ class AccessGroup(OpShell):
 
     def __truediv__(self, other):
         return AccessGroupRef(self.info.db, self.info.sep, None, self, other)
+
+    def add_user(self, user):
+        guild = str(uuid.uuid4())
+        self.db().execute(
+            "INSERT INTO user_groups(guild, member, access_group) "
+            "VALUES (?, ?, ?)", (guild, user, self.uuid))
+        return guild
 
 class AccessGroupRef(AccessGroup):
     def __init__(
@@ -140,7 +161,7 @@ class AccessGroupRef(AccessGroup):
     def qualname(self):
         if self._name is None:
             if self.names:
-                self._name = self.info.sep.join(self.names)
+                self._name = self.sep.join(self.names)
                 if self.source is not None:
                     self._name = self.source.qualname + self.sep + self._name
             else:
@@ -216,6 +237,7 @@ class AccessGroupRef(AccessGroup):
         return getattr(args[0], rpn[0])(*args[1:])
 
     def ensure(self, db=None):
+        db, close = db or self.db().begin(), db is None
         if len(self.names) > 1:
             self.source = __class__(
                 self.db, self.sep, None, self.source, *self.names[:-1],
@@ -224,4 +246,6 @@ class AccessGroupRef(AccessGroup):
         if self.source is not None:
             self.source.ensure(db)
         super().ensure(db)
+        if close:
+            db.close()
 

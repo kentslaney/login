@@ -228,8 +228,6 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## TODOs
-- create invite for owner; expect automated group by default
-- group add_user, remove_user, etc
 - set the platforms via launch conditions
 - other language/aiohttp compat via secondary; http cookie middleware
 - build a use case

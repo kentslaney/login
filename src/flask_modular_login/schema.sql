@@ -46,7 +46,7 @@ CREATE TABLE user_groups (
     member TEXT NOT NULL,
     access_group TEXT NOT NULL,
     until INT,
-    spots INT,
+    spots INT DEFAULT 0,
     active BOOLEAN DEFAULT 1,
     PRIMARY KEY(guild),
     FOREIGN KEY(member) REFERENCES auths(uuid),
@@ -74,7 +74,6 @@ CREATE TABLE invitations (
     FOREIGN KEY(accessing) REFERENCES access_groups(access_id),
     FOREIGN KEY(inviter) REFERENCES user_groups(guild),
     FOREIGN KEY(implies) REFERENCES invitations(invite),
-    CHECK((implies IS NULL) <> (redirect IS NULL)),
     CHECK(deauthorizes >= 0 AND deauthorizes <= 2),
     CHECK(implied >= -1 AND implied <= 1),
     CHECK(dos >= 0)

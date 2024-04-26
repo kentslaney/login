@@ -38,7 +38,7 @@ def ancestors(db, initial, selection, args=(), many=True):
             "UNION ALL "
             "SELECT inviter FROM "
             "user_groups RIGHT JOIN invitations ON via=invite, ancestors "
-            "WHERE guild=ancestors.n"
+            "WHERE guild=ancestors.n AND inviter IS NOT NULL"
           f") {selection}", (initial,) + args, True)
 
 access_lobby = RouteLobby()
@@ -193,16 +193,22 @@ class AccessRoot:
             self.db().execute(
                 "UPDATE invitations SET active=0 WHERE invite=?", (invite,))
             flask.abort(401)
-        # can't accept the same invite twice
-        user_group = db.queryone(
-            "SELECT via, member, spots FROM user_groups WHERE guild=?",
+        user_group = info.inviter and db.queryone(
+            "SELECT member FROM user_groups WHERE guild=?",
             (info.inviter,), True)
-        if user_group.member == user:
+        if user_group and user_group.member == user:
             db.close()
             return self.preview(invite, info)
+        # can't accept the same invite twice
+        previously = db.queryone(
+            "SELECT guild FROM user_groups WHERE via=? AND member=?",
+            (invite, user), True)
+        if previously:
+            db.close()
+            flask.abort(400, description=f"already accepted: {previously}")
         # no user_group loops
         # lower depletions; invites' invitees is not None if depletes
-        chain = ancestors(
+        chain = [] if info.inviter is None else ancestors(
             db, info.inviter, "SELECT guild, member, spots, invite, invitees, "
             "depletes FROM user_groups LEFT JOIN invitations on via=invite "
             "WHERE guild IN ancestors")
@@ -255,7 +261,7 @@ class AccessRoot:
         return db.queryall(
             "SELECT access_group, guild, via, member, " +
             "until, spots, depletes, dos, " +
-            "CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END AS " +
+            "CASE WHEN deauthorizes IS NULL THEN 0 ELSE deauthorizes END AS " +
             "deauthorizes FROM user_groups " +
             "LEFT JOIN invitations ON invite=via WHERE " +
             "user_groups.active=1 AND " +
@@ -439,7 +445,7 @@ class AccessRoot:
             if users_group.via is None:
                 limits = collections.namedtuple("limits", (
                     "depletes", "dos", "deauthorizes", "plus"))(
-                        False, None, 2, None)
+                        False, None, 0, None)
             else:
                 limits = db.queryone(
                     "SELECT depletes, dos, deauthorizes, plus FROM invitations "
@@ -517,7 +523,7 @@ class AccessRoot:
     def stack_auth(self, db, user, access_group):
         return access_stack(
                 db, access_group, "SELECT MAX"
-                "(CASE WHEN deauthorizes IS NULL THEN 2 ELSE deauthorizes END) "
+                "(CASE WHEN deauthorizes IS NULL THEN 0 ELSE deauthorizes END) "
                 "AS deauthorizes FROM invitations "
                 "RIGHT JOIN user_groups ON via=invite "
                 "WHERE user_groups.active=1 AND member=? AND "
@@ -648,11 +654,12 @@ class AccessRoot:
                 group.guild for group in permissions[0]], True)
         levels = [personal_invites, childrens_invites, group_invites]
         directory = dict(sum([group.implied_groups for group in groups], []))
-        user_groups = set(group.inviter for group in sum(levels, []))
-        usernames = dict(db.queryall(
+        user_groups = set(filter(None, (
+            group.inviter for group in sum(levels, []))))
+        usernames = {None: None, **dict(db.queryall(
             "SELECT guild, display_name FROM auths "
             "RIGHT JOIN user_groups ON member=auths.uuid WHERE guild IN (" +
-            ", ".join(("?",) * len(user_groups)) + ")", tuple(user_groups)))
+            ", ".join(("?",) * len(user_groups)) + ")", tuple(user_groups)))}
         return [[
             self.invite_info(
                 *group, directory[group.accessing], usernames[group.inviter])
@@ -674,6 +681,8 @@ class AccessRoot:
             if access_group[0] is None:
                 flask.abort(400)
             privledges = self.stack_auth(db, user, access_group[0])
+            if access_group[1] is None and privledges != 2:
+                flask.abort(401)
             if privledges == 0 and (user,) != db.queryone(
                     "SELECT member FROM user_groups WHERE guild=?",
                     (access_group[1],)):
