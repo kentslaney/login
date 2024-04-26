@@ -393,7 +393,6 @@ callback = FunctionList()
 
 class ClientWS(WSHandshake):
     # TODO: maybe timeout after long silence and reconnect when a request hits
-    # TODO: add versioning to messages/events to allow upgrades w/o downtime
 
     def __init__(self, base_url, uri, cache=None, *, root_path=None):
         super().__init__(root_path)

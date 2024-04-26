@@ -230,24 +230,22 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ## TODOs
 - group add_user, remove_user, etc; WS register group, ensure on first user
 - set the platforms via launch conditions
-- other language/aiohttp compat via secondary
+- other language/aiohttp compat via secondary; http cookie middleware
 - build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
 - linked accounts
 - check path interface consitency (pub/sub, memcached, secret_key)
-- what happens with multiple login_optional/login_required in a row?
+- __plus__ or nested decorators for via info on multiple groups
 - consistent indentation between if statements and others
 - purge access tokens from remote clients after they're stale
-- custom login BP (for the sake of public MVPs)
 - invite option to limit sharing by total use time?
-- include `X-API-Version` header to enable easier upgrades
+- include `X-API-Version` header and/or version field in WS messages
 - alternate language bindings [link](https://github.com/discord/itsdangerous-rs)
 - login.gov integration might be a polite civil service
-- consider sql alchemy
+- switch to python-social-auth
+- consider sql alchemy, prep database schema migration system
 - rewrite/restructure README to allow quickest start possible
-- guide for transitioning from existing setup?
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
-- type hints would be helpful
 - check SQL indicies
 - caching in various places
 - ...unit tests (hopefully higher up please)

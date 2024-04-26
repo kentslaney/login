@@ -170,11 +170,11 @@ class AccessGroupRef(AccessGroup):
                     self.db(), self.uuid, "SELECT n AS uuid FROM supersets")
         return self._stack
 
-    def __div__(self, other):
+    def __truediv__(self, other):
         if self.source is None or self._stack is not None:
             return AccessGroupRef(self.db, self.sep, None, self, other)
         return AccessGroupRef(
-                self.db, self.sep, None, self.source, *(self.names + [other]))
+            self.db, self.sep, None, self.source, *(self.names + [other]))
 
     @classmethod
     def reconstruct(cls, db, rpn, sep='/'):
