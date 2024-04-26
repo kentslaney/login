@@ -97,10 +97,14 @@ class LoginBuilder:
                 elif not isinstance(user, dict):
                     return user
                 if group is not None:
-                    group_args = {**kwargs, **({kw: user} if kw else {})}
+                    group_args = {**({kw: user} if kw else {}), **kwargs}
                     user = self.vet(user, group, redirect, required, group_args)
                     if not isinstance(user, dict):
                         return user
+                if kw is None or kw in kwargs and self.g is not None and \
+                        kwargs[kw] != self.g:
+                    self.g = user
+                    return f(*args, **kwargs)
                 self.g = user
                 return f(*args, **{**kwargs, **({kw: user} if kw else {})})
             return wrapper
