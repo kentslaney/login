@@ -1,5 +1,5 @@
 import flask, os, os.path, time, requests, websockets, json, asyncio, urllib
-import multiprocessing, base64
+import multiprocessing, base64, functools, inspect
 from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -11,7 +11,7 @@ from utils import project_path, RouteLobby, secret_key
 from login import refresh_access
 from group import AccessGroupRef
 from store import ThreadDB
-from utils import relpath
+from utils import relpath, dict_names
 from builder import LoginBuilder
 
 end_locals()
@@ -327,7 +327,8 @@ class ServerWS(WSHandshake):
 
     @actionable
     def access_query(self, user, access_group, sep='/'):
-        return user in AccessGroupRef.reconstruct(self.db, access_group, sep)
+        return dict_names(AccessGroupRef.reconstruct(
+            self.db, access_group, sep).vet(user))
 
     @actionable
     def ensure_access(self, access_group, sep='/', owner=None):
@@ -497,13 +498,21 @@ class ClientWS(WSHandshake):
         asyncio.run(self.listen())
 
 class ClientBP(Handshake):
+    def _closure(self, f):
+        sig = inspect.signature(f)
+        sig = sig.replace(parameters=list(sig.parameters.values())[1:])
+        @functools.wraps(f)
+        def wrapper(*a, **kw):
+            return asyncio.run(self._send(
+                f.__name__, **sig.bind(*a, **kw).arguments))
+        return staticmethod(wrapper)
+
     def __init__(self, *a, local=False, root_path=None, **kw):
         super().__init__(root_path)
         self.a, self.kw, self.unix_path = a, kw, \
             self.server_unix_path if local else self.client_unix_path
-        for k in actionable.keys():
-            setattr(self, k, lambda k: staticmethod(
-                lambda **kw: asyncio.run(self._send(k, **kw)))(k))
+        for k, v in actionable.items():
+            setattr(self, k, self._closure(v))
 
     async def _send(self, action, **kw):
         async with websockets.unix_connect(self.unix_path) as websocket:

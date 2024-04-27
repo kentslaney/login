@@ -137,8 +137,8 @@ class AccessGroupRef(AccessGroup):
     def __init__(
             self, db, sep='/', access_id=None, source=None, *names,
             qualname=None, owner=None):
-        self.db, self.sep, self._name = db, sep, qualname
-        self.info = GroupInfo(None, lambda *a, **kw: db(), owner, sep)
+        self.db, self.sep, self._name = lambda *a, **kw: db(), sep, qualname
+        self.info = GroupInfo(None, self.db, owner, sep)
         assert access_id and not names or names or qualname and not source
         self._uuid, self.source, self.names = access_id, source, names
         if self._name is not None:
