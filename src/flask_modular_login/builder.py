@@ -43,6 +43,10 @@ class LoginBuilder:
     def g(self, value):
         flask.g.__setattr__(self.g_attr, value)
 
+    @property
+    def session(self):
+        return OAuthBlueprint.session(self.app)
+
     def bounce(self, redirect=None, group=None):
         if group is not None:
             # TODO: request access page? from whom?
@@ -55,7 +59,7 @@ class LoginBuilder:
             flask.abort(401)
 
     def auth(self, redirect=None, required=True):
-        session_ = OAuthBlueprint.session(self.app)
+        session_ = self.session
         with self.app.app_context():
             # the flask dance blueprints modify the current context
             # with before_app_request for all requests to allow lookup

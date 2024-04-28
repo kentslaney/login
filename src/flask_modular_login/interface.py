@@ -84,7 +84,7 @@ class OAuthBlueprint(flask.Blueprint):
         for name, (_, factory, scope) in methods.items():
             stores[name] = DBStore(
                 db, name, cache, lambda: OAuthBlueprint.session(app),
-                *app.config["TIMEOUTS"])
+                *app.config.get("TIMEOUTS", ()))
             blueprints[name] = factory(
                 client_id=self._oauth_keys[name]["id"],
                 client_secret=self._oauth_keys[name]["secret"],

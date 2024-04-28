@@ -61,6 +61,8 @@ def authorized(session_=None):
     if method in methods:
         return methods[method][0].authorized
 
+default_timeouts = (3600*24, None)
+
 # this needs to go through login server for remote calls
 def refresh_access(db, refresh, refresh_time, lease_timeout, cached):
     now = int(time.time())
@@ -78,8 +80,10 @@ def refresh_access(db, refresh, refresh_time, lease_timeout, cached):
     return False, False, refresh_time
 
 class DBStore(BaseStorage):
-    def __init__(self, db, method, cache=None, session_=None,
-                 lease_timeout=3600*24, refresh_timeout=None):
+    def __init__(
+            self, db, method, cache=None, session_=None,
+            lease_timeout=default_timeouts[0],
+            refresh_timeout=default_timeouts[1]):
         super().__init__()
         self.db, self.method = db, method
         self.lease_timeout = lease_timeout
@@ -113,7 +117,7 @@ class DBStore(BaseStorage):
         authtime = int(time.time())
         refresh = secrets.token_urlsafe(32)
         ip = flask.request.remote_addr
-        session_["user"] = uniq
+        session_["user"], session_["authtime"] = uniq, authtime
         session_["refresh"], session_["refresh_time"] = refresh, authtime
         session_["name"], session_["picture"] = info["name"], info["picture"]
         self.db.execute(
@@ -160,6 +164,7 @@ class DBStore(BaseStorage):
         if updated:
             info = info or cached
             info[3] = refresh_time
+            session_["refresh_time"] = refresh_time
 
         current_ip = flask.request.remote_addr
         if ip != current_ip:

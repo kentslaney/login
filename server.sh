@@ -1,5 +1,5 @@
 #! /bin/bash
-BASE="$( dirname -- "$0" )"
+BASE="$( dirname -- '$0' )"
 
 setup () {
   mkdir -p "$BASE/run"
@@ -12,6 +12,10 @@ setup () {
   fi
 }
 
+caching () {
+    memcached -s "$BASE/run/memcached.sock" -P "$BASE/run/memcached.pid" &
+}
+
 case $1 in
   "")
     setup
@@ -19,6 +23,7 @@ case $1 in
     ;;
   debug)
     setup
+    caching
     cd "$BASE/src/flask_modular_login"
     python -m flask --app server:app run --port 8000 --debug
     ;;

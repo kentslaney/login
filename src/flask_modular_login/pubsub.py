@@ -8,9 +8,9 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from utils import project_path, RouteLobby, secret_key
-from login import refresh_access
+from login import refresh_access, default_timeouts
 from group import AccessGroupRef
-from store import ThreadDB
+from store import ThreadDB, FKDatabase
 from utils import relpath, dict_names
 from builder import LoginBuilder
 
@@ -449,6 +449,7 @@ class ClientWS(WSHandshake):
             "VALUES (?, ?, ?, ?)", info)
 
     async def io_hook(self, message, reply):
+        print(message, reply)
         data = json.loads(message)
         if data["action"] in callback:
             callback[data["action"]](self, data, reply)
@@ -524,9 +525,51 @@ class ClientBP(Handshake):
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
 class RemoteLoginBuilder(LoginBuilder):
-    # base_url via prefix
+    def __init__(self, base_url, uri, app=None, root_path=None, g_attr="user"):
+        app_kw = {} if app is None else {"app": app}
+        super().__init__(prefix=base_url, g_attr=g_attr, **app_kw)
+        self.bp = ClientBP(base_url=self.endpoint, uri=uri, root_path=root_path)
+        self.lease_timeout, self.refresh_timeout = self.app.config.get(
+            "TIMEOUTS", default_timeouts)
+
     def membership(self, group, user):
-        super().membership(group, user)
+        return self.bp.access_query(user, group)
+
+    _db = None
+    @property
+    def db(self):
+        if self._db is None:
+            self._db = FKDatabase(
+                self.app, self.bp.root_path("users.db"), relpath("schema.sql"))
+        return self._db
+
+    def auth(self, redirect=None, required=True):
+        # only checks timing, blacklist
+        session, now = self.session, time.time()
+        bounced = lambda: self.bounce(redirect) if required else None
+        if "user" not in session:
+            return bounced()
+        if self.refresh_timeout and \
+                now - session["authtime"] > self.refresh_timeout:
+            session.clear()
+            return bounced()
+        if self.db.queryone(
+                "SELECT EXISTS(SELECT 1 FROM ignore WHERE refresh=?)",
+                (session["refresh"],))[0]:
+            session.clear()
+            return bounced()
+        if self.lease_timeout and \
+                now - session["refresh_time"] > self.lease_timeout:
+            refresh_time = self.bp.refresh(session["refresh"])
+            if refresh_time is None:
+                session.clear()
+                return bounced()
+            session["refresh_time"] = refresh_time
+        return {
+                "id": session["user"],
+                "name": session["name"],
+                "picture": session["picture"],
+            }
 
 if __name__ == "__main__":
     ServerBP(None)._fork()
@@ -535,7 +578,13 @@ if __name__ == "__main__":
         root_path=project_path("run"))
     bp._fork()
     while True:
-        message = input("send action [argv 0] JSON [rest]: ").split(" ", 1)
+        message = input("send action [argv 0] JSON [rest]: ")
+        if message == "":
+            continue
+        message = message.split(" ", 1)
         message = message if len(message) == 2 else message + ["{}"]
+        if message[0] not in actionable:
+            print("invalid action call")
+            continue
         print(asyncio.run(bp._send(message[0], **json.loads(message[1]))))
 

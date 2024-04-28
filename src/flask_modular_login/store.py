@@ -198,7 +198,8 @@ class HeadlessDB:
             con = db[self.database] = sqlite3.connect(self.database)
             for i in self.init:
                 self.execute(i)
-            if self.debug and False:
+            # if False:
+            if self.debug:
                 con.set_trace_callback(print)
         return db[self.database]
 
