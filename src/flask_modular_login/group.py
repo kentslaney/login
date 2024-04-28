@@ -133,6 +133,10 @@ class AccessGroup(InfoShell):
             "VALUES (?, ?, ?)", (guild, user, self.uuid))
         return guild
 
+    def remove_access(self, guild):
+        return self.db().execute(
+            "UPDATE user_groups SET active=0 WHERE guild=?", (self.uuid,))
+
 class AccessGroupRef(AccessGroup):
     def __init__(
             self, db, sep='/', access_id=None, source=None, *names,

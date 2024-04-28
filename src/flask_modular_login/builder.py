@@ -1,4 +1,4 @@
-import os, os.path, functools, urllib.parse
+import functools, urllib.parse
 from werkzeug.middleware.proxy_fix import ProxyFix
 import flask
 
@@ -23,11 +23,13 @@ class PermissionsWrapper(tuple):
     pass
 
 class LoginBuilder:
-    def __init__(self, app=app, prefix=None, g_attr="user"):
+    def __init__(self, app=app, prefix=None, g_attr="user", root_path=None):
         self.app = app
         self.prefix = prefix
         self.g_attr = g_attr
-        app.secret_key = secret_key()
+        self.root_path = root_path
+        root_path = () if root_path is None else (root_path,)
+        app.secret_key = secret_key(*root_path)
 
     @property
     def endpoint(self):

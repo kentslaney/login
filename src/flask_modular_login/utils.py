@@ -71,6 +71,8 @@ class RouteLobby:
 
 key_paths = (project_path("run"), project_path())
 def secret_key(paths = key_paths):
+    if isinstance(key_paths, str):
+        paths = (paths,)
     for path in paths:
         file = os.path.join(path, "secret_key")
         if os.path.exists(file):

@@ -229,12 +229,11 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 
 ## TODOs
 - set the platforms via launch conditions
-- other language/aiohttp compat via secondary; http cookie middleware
+- other language compat
 - build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
 - linked accounts
 - check path interface consitency (pub/sub, memcached, secret_key)
-- RemoteLoginBuilder
 - consistent indentation between if statements and others
 - purge access tokens from remote clients after they're stale
 - invite option to limit sharing by total use time?

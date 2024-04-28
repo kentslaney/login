@@ -171,7 +171,7 @@ class DBStore(BaseStorage):
             db.execute("UPDATE active SET ip=? WHERE refresh=?",
                 (current_ip, refresh))
             info = info or cached
-            info[2] = current_ip
+            info[1] = current_ip
             write = True
 
         if info is not None:

@@ -1,18 +1,20 @@
 import flask, os, os.path, time, requests, websockets, json, asyncio, urllib
-import multiprocessing, base64, functools, inspect
+import multiprocessing, base64, functools, inspect, datetime
 from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from itsdangerous import BadSignature
 
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from utils import project_path, RouteLobby, secret_key
-from login import refresh_access, default_timeouts
+from login import refresh_access, default_timeouts, authorized
 from group import AccessGroupRef
 from store import ThreadDB, FKDatabase
 from utils import relpath, dict_names
-from builder import LoginBuilder
+from builder import LoginBuilder, app as DefaultBuilder
+from interface import OAuthBlueprint
 
 end_locals()
 
@@ -39,12 +41,15 @@ class Handshake:
     otp_timeout_ms = 5000
 
     def __init__(self, root_path=None):
-        self._root_path = root_path or project_path("run")
-        self.server_unix_path = self.root_path("server.sock")
-        self.client_unix_path = self.root_path("client.sock")
+        self._root_path = root_path or project_path()
+        self.server_unix_path = self.run_path("server.sock")
+        self.client_unix_path = self.run_path("client.sock")
 
     def root_path(self, *a):
         return os.path.join(self._root_path, *a)
+
+    def run_path(self, *a):
+        return self.root_path("run", *a)
 
     @staticmethod
     def serialized_public(key):
@@ -54,8 +59,8 @@ class Handshake:
 
     # guarantees self.key
     def keypair(self):
-        if os.path.exists(self.root_path("private.pem")):
-            with open(self.root_path("private.pem"), "rb") as fp:
+        if os.path.exists(self.run_path("private.pem")):
+            with open(self.run_path("private.pem"), "rb") as fp:
                 key = serialization.load_pem_private_key(
                     fp.read(), password=None)
         else:
@@ -64,13 +69,13 @@ class Handshake:
                 key_size=2048
             )
 
-            with open(self.root_path("private.pem"), "wb") as fp:
+            with open(self.run_path("private.pem"), "wb") as fp:
                 fp.write(key.private_bytes(
                     serialization.Encoding.PEM,
                     serialization.PrivateFormat.PKCS8,
                     serialization.NoEncryption()))
 
-            with open(self.root_path("public.pem"), "wb") as fp:
+            with open(self.run_path("public.pem"), "wb") as fp:
                 fp.write(self.serialized_public(key))
 
         self.key = key
@@ -78,8 +83,8 @@ class Handshake:
     # returns exit status as bool
     public = None
     def load_public(self):
-        if os.path.exists(self.root_path("public.pem")):
-            with open(self.root_path("public.pem"), 'rb') as fp:
+        if os.path.exists(self.run_path("public.pem")):
+            with open(self.run_path("public.pem"), 'rb') as fp:
                 self.public = serialization.load_pem_public_key(fp.read())
             return False
         return True
@@ -91,7 +96,7 @@ class Handshake:
     # limits app secret key to 128, 192, or 256 bits
     @property
     def secret(self):
-        return secret_key()
+        return secret_key(self.run_path())
 
     _salt = None
     @property
@@ -142,7 +147,7 @@ class Handshake:
 
     # saves/returns the AES encrypted public key
     def save_public(self, serialized):
-        with open(self.root_path("public.pem"), "wb") as fp:
+        with open(self.run_path("public.pem"), "wb") as fp:
             fp.write(serialized)
         public = serialization.load_pem_public_key(serialized)
         return public
@@ -265,7 +270,7 @@ class WSHandshake(Handshake):
     def db(self):
         if self._db is None:
             self._db = ThreadDB(
-                self.root_path("users.db"), relpath("schema.sql"))
+                self.run_path("users.db"), relpath("schema.sql"))
         return self._db
 
 class FunctionList(dict):
@@ -273,6 +278,30 @@ class FunctionList(dict):
         self[f.__name__] = f
 
 actionable = FunctionList()
+
+class SessionLoader(flask.sessions.SecureCookieSessionInterface, Handshake):
+    permanent_session_lifetime = datetime.timedelta(days=31)
+
+    def get_signing_serializer(self, app=None):
+        return super().get_signing_serializer(
+            type("key_wrapper", (), {"secret_key": self.secret})()
+            if app is None else app)
+
+    def open(self, val):
+        s = self.get_signing_serializer()
+        if s is None:
+            return None
+        if not val:
+            return self.session_class()
+        max_age = int(self.permanent_session_lifetime.total_seconds())
+        try:
+            data = s.loads(val, max_age=max_age)
+            return self.session_class(data)
+        except BadSignature:
+            return self.session_class()
+
+    def save(self, session):
+        return self.get_signing_serializer().dumps(dict(session))
 
 class ServerWS(WSHandshake):
     def __init__(
@@ -283,6 +312,7 @@ class ServerWS(WSHandshake):
         self.cache, self.secondaries = cache, set()
         self.lease_timeout = lease_timeout
         self.refresh_timeout = refresh_timeout
+        self.session_loader = SessionLoader(root_path)
 
     _key = None
     @property
@@ -293,6 +323,16 @@ class ServerWS(WSHandshake):
     @key.setter
     def key(self, value):
         self._key = value
+
+    _app = None
+    def app(self):
+        # can no longer coexist with the server module
+        if self._app is None:
+            self._app = DefaultBuilder
+            bp = OAuthBlueprint(root_path=self.root_path())
+            bp.session = staticmethod(lambda app: flask.g.session)
+            self._app.register_blueprint(bp)
+        return self._app
 
     @actionable
     def refresh(self, auth):
@@ -343,8 +383,33 @@ class ServerWS(WSHandshake):
 
     @actionable
     def remove_access(self, guild):
-        return self.db().execute(
-            "UPDATE user_groups SET active=0 WHERE guild=?", (guild,))
+        return AccessGroupRef.reconstruct(
+            self.db, access_id=guild).remove_access(user)
+
+    @actionable
+    def from_value(self, cookie, remote_addr, group=None, sep='/'):
+        session = self.session_loader.open(cookie)
+        with self.app().app_context():
+            # the flask dance blueprints modify the current context
+            # with before_app_request for all requests to allow lookup
+            for ctx_setup in flask.current_app.before_request_funcs[None]:
+                ctx_setup()
+            flask.g.session = session
+            with self.app().test_request_context(
+                    environ_base={'REMOTE_ADDR': remote_addr}):
+                if not authorized(session):
+                    return {"user": None, "cookie": None, "modified": True}
+        user = {
+                "id": session["user"],
+                "name": session["name"],
+                "picture": session["picture"],
+            }
+        if group is not None:
+            user["via"] = {"access": self.access_query(user["id"], group, sep)}
+        return {
+            "user": user, "modified": session.modified,
+            "cookie": self.session_loader.save(session)
+        }
 
     async def local_primary(self, ws, init):
         websockets.broadcast(self.secondaries, self.server_send(init))
@@ -449,7 +514,7 @@ class ClientWS(WSHandshake):
             "VALUES (?, ?, ?, ?)", info)
 
     async def io_hook(self, message, reply):
-        print(message, reply)
+        # print(message, reply)
         data = json.loads(message)
         if data["action"] in callback:
             callback[data["action"]](self, data, reply)
@@ -504,8 +569,7 @@ class ClientBP(Handshake):
         sig = sig.replace(parameters=list(sig.parameters.values())[1:])
         @functools.wraps(f)
         def wrapper(*a, **kw):
-            return asyncio.run(self._send(
-                f.__name__, **sig.bind(*a, **kw).arguments))
+            return self._send(f.__name__, **sig.bind(*a, **kw).arguments)
         return staticmethod(wrapper)
 
     def __init__(self, *a, local=False, root_path=None, **kw):
@@ -524,10 +588,36 @@ class ClientBP(Handshake):
         ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
+class LocalLoginBuilder(LoginBuilder):
+    def __init__(self, root_path=None):
+        super().__init__(prefix=None, root_path=root_path)
+        self.bp = ClientBP(local=True, root_path=root_path)
+
+    async def __call__(self, *a, group=None, **kw):
+        if callable(group) and not isinstance(group, AccessGroup):
+            user = await self.bp.from_value(
+                self.get_cookie(*a, **kw), self.remote_addr(*a, **kw))
+            group = group(user)
+        res = await self.bp.from_value(
+            self.get_cookie(*a, **kw), self.remote_addr(*a, **kw), group)
+        if res["modified"]:
+            self.set_cookie(res["cookie"], *a, **kw)
+        return res["user"]
+
+    def remote_addr(self, *a, **kw):
+        raise NotImplementedError()
+
+    def get_cookie(self, *a, **kw):
+        raise NotImplementedError()
+
+    def set_cookie(self, value, *a, **kw):
+        raise NotImplementedError()
+
 class RemoteLoginBuilder(LoginBuilder):
     def __init__(self, base_url, uri, app=None, root_path=None, g_attr="user"):
         app_kw = {} if app is None else {"app": app}
-        super().__init__(prefix=base_url, g_attr=g_attr, **app_kw)
+        super().__init__(
+            prefix=base_url, g_attr=g_attr, root_path=root_path, **app_kw)
         self.bp = ClientBP(base_url=self.endpoint, uri=uri, root_path=root_path)
         self.lease_timeout, self.refresh_timeout = self.app.config.get(
             "TIMEOUTS", default_timeouts)
@@ -540,7 +630,7 @@ class RemoteLoginBuilder(LoginBuilder):
     def db(self):
         if self._db is None:
             self._db = FKDatabase(
-                self.app, self.bp.root_path("users.db"), relpath("schema.sql"))
+                self.app, self.bp.run_path("users.db"), relpath("schema.sql"))
         return self._db
 
     def auth(self, redirect=None, required=True):
@@ -553,6 +643,7 @@ class RemoteLoginBuilder(LoginBuilder):
                 now - session["authtime"] > self.refresh_timeout:
             session.clear()
             return bounced()
+        # TODO: caching
         if self.db.queryone(
                 "SELECT EXISTS(SELECT 1 FROM ignore WHERE refresh=?)",
                 (session["refresh"],))[0]:
@@ -560,7 +651,7 @@ class RemoteLoginBuilder(LoginBuilder):
             return bounced()
         if self.lease_timeout and \
                 now - session["refresh_time"] > self.lease_timeout:
-            refresh_time = self.bp.refresh(session["refresh"])
+            refresh_time = asyncio.run(self.bp.refresh(session["refresh"]))
             if refresh_time is None:
                 session.clear()
                 return bounced()
@@ -575,7 +666,7 @@ if __name__ == "__main__":
     ServerBP(None)._fork()
     bp = ClientBP(
         base_url="http://localhost:8000/login", uri="ws://localhost:8001",
-        root_path=project_path("run"))
+        root_path=project_path())
     bp._fork()
     while True:
         message = input("send action [argv 0] JSON [rest]: ")

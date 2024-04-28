@@ -18,7 +18,7 @@ class LoginBlueprint(OAuthBlueprint):
         super().__init__(*a, **kw)
         login_lobby.register_lobby(self, self)
         self._oauth_ws = ServerBP(
-            self._oauth_db, root_path=self._oauth_run_root)
+            self._oauth_db, root_path=self._oauth_root_path)
         self.register_blueprint(self._oauth_ws.bp)
 
     def _oauth_deauthorize(self, token, method):

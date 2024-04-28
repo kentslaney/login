@@ -30,6 +30,7 @@ class OAuthBlueprint(flask.Blueprint):
             name, import_name, static_folder, static_url_path, template_folder,
             url_prefix, subdomain, url_defaults, root_path, cli_group)
 
+        self._oauth_root_path = root_path
         self._oauth_run_root = os.path.join(root_path, *self._oauth_run_path)
         self._oauth_apps = []
         self._get_oauth_keys()
@@ -83,7 +84,7 @@ class OAuthBlueprint(flask.Blueprint):
         stores, blueprints = {}, {}
         for name, (_, factory, scope) in methods.items():
             stores[name] = DBStore(
-                db, name, cache, lambda: OAuthBlueprint.session(app),
+                db, name, cache, lambda: self.session(app),
                 *app.config.get("TIMEOUTS", ()))
             blueprints[name] = factory(
                 client_id=self._oauth_keys[name]["id"],
