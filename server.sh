@@ -23,7 +23,11 @@ case $1 in
     ;;
   debug)
     setup
-    caching
+    if which memcached &> /dev/null; then
+        caching
+    else
+        echo "starting server without memcached"
+    fi
     cd "$BASE/src/flask_modular_login"
     python -m flask --app server:app run --port 8000 --debug
     ;;

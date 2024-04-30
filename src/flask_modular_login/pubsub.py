@@ -276,6 +276,7 @@ class WSHandshake(Handshake):
 class FunctionList(dict):
     def __call__(self, f):
         self[f.__name__] = f
+        return f
 
 actionable = FunctionList()
 
@@ -588,10 +589,8 @@ class ClientBP(Handshake):
         ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
         multiprocessing.Process(target=ws.run, daemon=True).start()
 
-class LocalLoginBuilder(LoginBuilder):
-    def __init__(self, root_path=None):
-        super().__init__(prefix=None, root_path=root_path)
-        self.bp = ClientBP(local=True, root_path=root_path)
+class SessionFromValueMixin:
+    bp = None # unimplemented
 
     async def __call__(self, *a, group=None, **kw):
         if callable(group) and not isinstance(group, AccessGroup):
@@ -613,6 +612,11 @@ class LocalLoginBuilder(LoginBuilder):
     def set_cookie(self, value, *a, **kw):
         raise NotImplementedError()
 
+class LocalLoginInterface(LoginBuilder, SessionFromValueMixin):
+    def __init__(self, root_path=None):
+        super().__init__(prefix=None, root_path=root_path)
+        self.bp = ClientBP(local=True, root_path=root_path)
+
 class RemoteLoginBuilder(LoginBuilder):
     def __init__(self, base_url, uri, app=None, root_path=None, g_attr="user"):
         app_kw = {} if app is None else {"app": app}
@@ -633,9 +637,9 @@ class RemoteLoginBuilder(LoginBuilder):
                 self.app, self.bp.run_path("users.db"), relpath("schema.sql"))
         return self._db
 
-    def auth(self, redirect=None, required=True):
+    def auth(self, redirect=None, required=True, session=None):
         # only checks timing, blacklist
-        session, now = self.session, time.time()
+        session, now = session or self.session, time.time()
         bounced = lambda: self.bounce(redirect) if required else None
         if "user" not in session:
             return bounced()
@@ -661,6 +665,29 @@ class RemoteLoginBuilder(LoginBuilder):
                 "name": session["name"],
                 "picture": session["picture"],
             }
+
+class RemoteLoginInterface(RemoteLoginBuilder, SessionFromValueMixin):
+    def __init__(self, base_url, uri, app=None, root_path=None, g_attr="user"):
+        super().__init__(base_url, uri, app, root_path, g_attr)
+        self.session_loader = SessionLoader(root_path)
+
+    _db = None
+    @property
+    def db(self):
+        if self._db is None:
+            self._db = ThreadDB(
+                self.bp.run_path("users.db"), relpath("schema.sql"))
+        return self._db
+
+    async def __call__(self, *a, group=None, **kw):
+        if group is None:
+            session = self.session_loader.open(self.get_cookie(*a, **kw))
+            res = self.auth(required=False, session=session)
+            if session.modified:
+                session = self.session_loader.save(cookie)
+                self.set_cookie(session, *a, **kw)
+            return res
+        return await super().__call__(*a, group=group, **kw)
 
 if __name__ == "__main__":
     ServerBP(None)._fork()
