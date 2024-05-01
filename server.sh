@@ -2,6 +2,7 @@
 BASE="$( dirname -- '$0' )"
 
 setup () {
+  # return
   mkdir -p "$BASE/run"
   if [ ! -d "$BASE/env" ]; then
     python -m venv "$BASE/env"

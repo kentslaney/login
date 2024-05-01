@@ -1,37 +1,110 @@
 # Flask Modular Login
-The goal of this project is to allow multiple flask projects to share a single
-OAuth login interface, removing the need for multiple API keys and user
-databases.
+The goal of this project is to allow multiple servers to share a single OAuth
+login interface, removing the need for multiple access tokens across separate
+user databases. It also serves as an authentication microservice, enabling load
+balancing for a distributed system without acting as a bottleneck. Finally, the
+project also handles role based access control, including hierarchical groups
+and limited-privledge sharing with user friendly QR code support.
 
-## Usage as a Service
+It is written in Flask has the simplest interface with client applications also
+in Flask, but also has an interface for any other Python web framework. The
+middleware for aiohttp, for example, will be covered below. The project doesn't
+have bindings for projects in languages besides Python yet, but is well equipped
+to handle them using the same interfaces as the ones supporting non-Flask based
+Python applications.
+
+## Starting the Login Service
+This project requires `memcached` to be installed in the environment hosting the
+login service. Installation is OS dependant. The python virtual environment will
+be set up and started by the server script, so if it's already running in a
+container, you may prefer to uncomment the early exit from the setup function in
+`setup.sh`.
+
+Once `memcached` has been installed, start the login service on port 8000 with
+```bash
+$ ./server debug
+```
+
+If you go to [`http://localhost:8000/login/view/sessions`](
+http://localhost:8000/login/view/sessions), you should see a
+'test' link, which will let you specify a username, then show you the current
+session.
+
+Clearly, this isn't much of a secure login interface yet, but it does allow for
+testing the process without any OAuth API keys. The 'test' option will go away
+once the server is run without the `debug` subcommand. Using the 'test' option,
+the next two sections can be done in any order.
+
+## Adding OAuth Providers
+This project [currently](#todos) relies on
+[flask-dance](https://github.com/singingwolfboy/flask-dance) for its OAuth
+interface, meaning that any of the [providers supported there](
+https://flask-dance.readthedocs.io/en/latest/providers.html) will also work
+here. For now, the easiest platforms to set up are Google, Facebook, and Github,
+for reasons that will be explained momentarily.
+
 Add a `credentials.json` to the root directory of this project, in the form
 ```json
 {
     "google|facebook|github": {"id": "username", "secret": "API key"},
 }
 ```
-In case the project doesn't have OAuth credentials or a public facing URL yet,
-starting the server in debug mode will add a "test" login option.
 
-The only dependency not included is the memcached server. Once installed, start
-the caching service and server via
-```bash
-$ ./server debug
+Once the user logs in, the service guarantees a username (`id`), display name
+(`name`), and picture (`picture`).
+
+The available platforms are defined in `src/flask_modular_login/platforms.py`,
+which maps the OAuth response to the platform-agnostic keys given to client
+projects. Remove unused providers from the `methods` dictionary, or add them in
+both `userlookup` and `methods`.
+
+### Serving via Unix Socket
+At this point, some providers may require a public facing URL to redirect to.
+With the default deployment, `uwsgi.ini` will serve requests from
+`run/uwsgi.sock`, relative to this project's root directory. The other important
+thing for the web server middleware is that only requests prefixed with `/login`
+should be passed to this process.
+
+Here is an example of a working Nginx setup where `socket` in `uwsgi.ini` has
+been modified to be `/tmp/flask_modular_login.sock`:
+```
+location = /login { rewrite ^ /login/; }
+location /login { try_files $uri @login; }
+location @login {
+        include uwsgi_params;
+        uwsgi_pass unix:/tmp/flask_modular_login.sock;
+}
 ```
 
-In the client project with a login requirement, install the local copy of this
-repo using
+## Add Logging in to Projects
+In the project with a login requirement ('client'), install the local copy of
+this repo using
 ```bash
 $ pip install -e path/to/repo
 ```
 
+The client can either be on the same server as the login service ('local') or on
+a separate one ('remote'), and the server can be either Flask ('builder') or not
+('interface'). By default, project is assumed to be on the same server and
+written in Flask.
+
+### (Local)LoginBuilder
+When all the URLs are accessed via localhost loopback, the client and server
+projects are served on different ports. This is in contrast to the default setup
+for deployment, where only the paths differ. To run a test setup, then, the URL
+prefix for the login server has to be specified as `http://localhost:8000`. This
+will be included in the example code below, but needs to be removed or updated
+when deploying to public facing URLs.
+
 For in the server code for the client project, login requirements can now be
-specified using
+specified using `login_required` and `login_optional`. A demo of different
+features is below
 ```python
 import flask
 from flask_modular_login import login_required, login_optional
 
 app = flask.Flask(__name__)
+login_required.prefix = "//localhost:8000"
 
 @app.route("/user_info/<kind>")
 @login_required(kw="user")
@@ -68,105 +141,82 @@ app.register_blueprint(bp) # login_required call could also be here
 if __name__ == "__main__":
     app.run(port=8080)
 ```
-Note that this project only works if the two project URLs share cookies. If the
-two projects aren't hosted on the same subdomain, the login redirect will 404,
-since the client project doesn't have access to the public facing setup for the
-login server. If this is the case, a prefix can be added to the redirect URL via
+
+Because the `login_required` and `login_optional` objects refer to the same
+`LoginBuilder`, updating one will update both. Another way to achieve this would
+be
 
 ```python
 from flask_modular_login import LoginBuilder
 
-login_config = LoginBuilder(prefix="//example.com/path/prefix")
+login_config = LoginBuilder(prefix="http://localhost:8000")
 login_required, login_optional = login_config.decorators
 ```
-or
+
+### LocalLoginInterface
+Python projects using web servers other than Flask are also supported, but have
+to specify a way to
+ 1. get the web request's IP address
+ 2. get the HTTP cookie `login` (barring config changes)
+ 3. set the HTTP cookie `login` (again, subject to config)
+
+For example, a web server written in [aiohttp](
+https://github.com/aio-libs/aiohttp) might set up the login interface as
 ```python
-from flask_modular_login import login_required
+from aiohttp import web
+from flask_modular_login import LocalLoginInterface
 
-login_required.prefix = "//example.com/path/prefix"
-# this will modify the default object for both login_required and login_optional
-# for all submodules as well
+class LoginBuilder(LocalLoginInterface):
+    def remote_addr(self, request):
+        return request.remote
+
+    def get_cookie(self, request):
+        return request.cookies.get('login')
+
+    def set_cookie(self, value, request):
+        request["login"] = value
+
+login = LoginBuilder()
+
+@web.middleware
+async def process_request(request, handler):
+    request['user'] = await login(request)
+    response = await handler(request)
+    if 'login' in request:
+        response.set_cookie('login', request['login'])
+    return response
+
+app = web.Application(middlewares=[process_request])
+
+async def handler(request):
+    return web.Response(text='Hello, ' + str(request["user"]))
+
+app.router.add_get('/', handler)
+
+if __name__ == '__main__':
+    web.run_app(app)
 ```
 
-You can then use `login_required` and `login_optional` as you normally would.
-
-For the default server setup, when runing in debug, `prefix` should be
-`"//localhost:8000"`, and the only working login option will be "test" until
-the server is running on externally visable URLs for OAuth services to redirect
-to.
-
-For reference, the correspoinding Nginx deployment setup looks like
-```
-location = /login { rewrite ^ /login/; }
-location /login { try_files $uri @login; }
-location @login {
-        include uwsgi_params;
-        uwsgi_pass unix:/tmp/flask_modular_login.sock;
-}
-```
-
+### RemoteLoginBuilder
 Another important option for load balancing is being able to have the login
-system as a separate service, only contacted when a access token needs to be
-refreshed or a refresh token revoked (eg when the user logs out). In order to
-connect the login service with the client server, the client needs to be able to
-access an open port on the login server. While the protocol allows this to be
-open to the internet while remaining secure, it's likely preferable to use
-(reverse) port forwarding on top of ssh to establish the connection unless the
-entire cluster is running behind a firewall.
+system as a separate service, only contacted when an access token lease needs to
+be refreshed or revoked (eg when the user logs out). In order to connect the
+login service with the client server, the client needs to be able to access an
+open port on the login server.
 
-The login server will automatically create the websocket processes and to
-integrate a client project `LoginBuilder` just has to be substituted with
-`RemoteLoginBuilder`. The default port is `8765`, and the host string will need
-to be changed if it's accessed via IP/DNS instead of port forwarding.
+`[section still under construction]`
 
-## Usage as a Package
-If there is only one project (ie one flask app) that this login service is being
-deployed for, it is also possible to use this repo as a normal package, removing
-the extra service/cache to set up.
-```python
-import flask
-from flask_modular_login import OAuthBlueprint, LoginBuilder, login_required
+### RemoteLoginInterface
+`pass`
 
-app = flask.Flask(__name__)
-app.register_blueprint(OAuthBlueprint(root_path="path/to/credentials/dir"))
-
-login_required.app = app
-# or
-login_required, login_optional = LoginBuilder(app=app).decorators
-
-@app.route("/secret")
-@login_required
-def hidden():
-    return "personal"
-
-if __name__ == "__main__":
-    app.run(port=8080)
-```
-
-This repo isn't currently on pypi, but it can be included as a requirement by
-specifying the git URL. While this setup wasn't the original design goal of the
-project, it's still effective and easier to transition into a separate service
-later on as needed.
-
-## Customization and OAuth Platform Support
-At the moment, the project serves the login interface from the templates in
-`src/templates`, which probably need styling to match the application if they're
-used. As an alternative, the links that are filled into `/login` by default can
-be opened to in a separate window, which should redirect appropiately. The
-`next` query parameter sets the redirect location.
-
-This project relies on
-[flask-dance](https://github.com/singingwolfboy/flask-dance) for OAuth provider
-integration. To change which are supported, modify the interface connected in
-`src/platforms.py`. Removing items can be done by commenting out lines in the
-`methods` dictionary.
-
+## Useful commands
 ```bash
 echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 -A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
 ```
 
 ## Project Structure
+Rough, slightly outdated and/or not built yet
 ```
 +-------------+
 | access root |
@@ -214,7 +264,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
                /                   |       /                   |
               /                    |      /                    |
 +-------------+             +-------------+             +-------------+
-|  server BP  |             |login builder| <-?merge?-> |  client BP  |
+|  server BP  |             |login builder|             |  client BP  |
 +-------------+             |  interface  |             +-------------+
                \__          +-------------+                    |
                   \_               |                           |

@@ -218,6 +218,11 @@ class Handshake:
             data[:0x100], data[0x100:], *self.signing_params)
         return self.server_send(data[0x108:])
 
+    def _fork(self, ws):
+        e = multiprocessing.Event()
+        multiprocessing.Process(target=ws.run, args=(e,), daemon=True).start()
+        e.wait()
+
 server_lobby = RouteLobby()
 
 class ServerBP(Handshake):
@@ -232,8 +237,7 @@ class ServerBP(Handshake):
         self.keypair()
 
     def _fork(self):
-        ws = ServerWS(*self.a, root_path=self.root_path(), **self.kw)
-        multiprocessing.Process(target=ws.run, daemon=True).start()
+        super()._fork(ServerWS(*self.a, root_path=self.root_path(), **self.kw))
 
     @server_lobby.route("/syn", methods=["POST"])
     def syn(self):
@@ -462,13 +466,15 @@ class ServerWS(WSHandshake):
         else:
             await self.remote_primary(ws, message)
 
-    async def main(self):
+    async def main(self, e=None):
         async with websockets.serve(self.remote_router, self.host, self.port), \
                 websockets.unix_serve(self.local_router, self.server_unix_path):
+            if e is not None:
+                e.set()
             await asyncio.Future()
 
-    def run(self):
-        asyncio.run(self.main())
+    def run(self, e=None):
+        asyncio.run(self.main(e))
 
 callback = FunctionList()
 
@@ -481,7 +487,7 @@ class ClientWS(WSHandshake):
         self._url = base_url
 
     def url(self, path, query=None):
-        return self._url + "/ws" + path + (
+        return self._url + "/login/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
 
     _public = None
@@ -523,7 +529,7 @@ class ClientWS(WSHandshake):
     def router(self, message):
         return self.revoke(message["data"])
 
-    async def listen(self):
+    async def listen(self, e=None):
         q = asyncio.Queue()
         async def handler(ws):
             e = asyncio.Event()
@@ -543,6 +549,8 @@ class ClientWS(WSHandshake):
             remote, local = list(map(
                 asyncio.create_task, [notify.recv(), q.get()]))
             await asyncio.to_thread(self.update)
+            if e is not None:
+                e.set()
 
             while True:
                 done, pending = await asyncio.wait(
@@ -561,8 +569,8 @@ class ClientWS(WSHandshake):
                     event.set()
                     local = asyncio.create_task(q.get())
 
-    def run(self):
-        asyncio.run(self.listen())
+    def run(self, e=None):
+        asyncio.run(self.listen(e))
 
 class ClientBP(Handshake):
     def _closure(self, f):
@@ -586,8 +594,7 @@ class ClientBP(Handshake):
             return json.loads(await websocket.recv())
 
     def _fork(self):
-        ws = ClientWS(*self.a, root_path=self.root_path(), **self.kw)
-        multiprocessing.Process(target=ws.run, daemon=True).start()
+        super()._fork(ClientWS(*self.a, root_path=self.root_path(), **self.kw))
 
 class SessionFromValueMixin:
     bp = None # unimplemented
@@ -689,12 +696,7 @@ class RemoteLoginInterface(RemoteLoginBuilder, SessionFromValueMixin):
             return res
         return await super().__call__(*a, group=group, **kw)
 
-if __name__ == "__main__":
-    ServerBP(None)._fork()
-    bp = ClientBP(
-        base_url="http://localhost:8000/login", uri="ws://localhost:8001",
-        root_path=project_path())
-    bp._fork()
+def repl(client):
     while True:
         message = input("send action [argv 0] JSON [rest]: ")
         if message == "":
@@ -704,5 +706,11 @@ if __name__ == "__main__":
         if message[0] not in actionable:
             print("invalid action call")
             continue
-        print(asyncio.run(bp._send(message[0], **json.loads(message[1]))))
+        print(asyncio.run(client._send(message[0], **json.loads(message[1]))))
+
+if __name__ == "__main__":
+    ServerBP(None, host="localhost", port=8001)._fork()
+    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
+    ws = ClientWS(base_url=base_url, uri="ws://localhost:8001")
+    ws.run()
 
