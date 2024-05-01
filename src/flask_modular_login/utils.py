@@ -70,17 +70,17 @@ class RouteLobby:
         return decorator
 
 key_paths = (project_path("run"), project_path())
-def secret_key(paths = key_paths):
+def secret_key(paths = key_paths, key_name="login_secret_session_key"):
     if isinstance(paths, str):
         paths = (paths,)
     for path in paths:
-        file = os.path.join(path, "secret_key")
+        file = os.path.join(path, key_name)
         if os.path.exists(file):
             with open(file, "rb") as f:
                 return f.read()
 
     os.makedirs(paths[0], exist_ok=True)
-    with open(os.path.join(paths[0], "secret_key"), "wb") as f:
+    with open(os.path.join(paths[0], key_name), "wb") as f:
         secret = os.urandom(24)
         f.write(secret)
     return secret

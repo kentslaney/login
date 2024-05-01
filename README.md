@@ -28,6 +28,11 @@ Clearly, this isn't much of a secure login interface yet, but it does allow for
 testing the process without any OAuth API keys. The 'test' option will go away
 once the server is run without the `debug` subcommand.
 
+You may notice that the user interfaces are very bare-bones. This is because
+they are generally expected to be used through their corresponding AJAX
+endpoints from a page styled by the corresponding project. Alternatively, the
+templates are in `src/flask_modular_login/templates`.
+
 ## Authentication Groups
 Most applications need more state information about a user than just whether
 they're logged in. For example, to do a closed beta, there needs to be a
@@ -257,7 +262,9 @@ Another important option for load balancing is being able to have the login
 system as a separate service, only contacted when an access token lease needs to
 be refreshed or revoked (eg when the user logs out). In order to connect the
 login service with the client server, the client needs to be able to access an
-open port on the login server.
+open port on the login server. In order to ensure the authenticity of the
+session cookie, the client also needs a copy of the `secret_key` used by Flask.
+By default, this is stored in `run/login_secret_session_key`.
 
 `[section still under construction]`
 
@@ -291,7 +298,7 @@ location @login {
 ## Useful commands
 ```bash
 echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
--A `wc -l README.md | sed 's![^0-9]!!g'` | tail -n +2)" | nl
+-A `wc -l README.md | sed 's%[^0-9]%%g'` | tail -n +2)" | nl
 ```
 
 ## Project Structure
