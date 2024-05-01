@@ -14,15 +14,9 @@ to handle them using the same interfaces as the ones supporting non-Flask based
 Python applications.
 
 ## Starting the Login Service
-This project requires `memcached` to be installed in the environment hosting the
-login service. Installation is OS dependant. The python virtual environment will
-be set up and started by the server script, so if it's already running in a
-container, you may prefer to uncomment the early exit from the setup function in
-`setup.sh`.
-
-Once `memcached` has been installed, start the login service on port 8000 with
+Start the login service on port 8000 with
 ```bash
-$ ./server debug
+$ sh server.sh debug
 ```
 
 If you go to [`http://localhost:8000/login/view/sessions`](
@@ -32,8 +26,82 @@ session.
 
 Clearly, this isn't much of a secure login interface yet, but it does allow for
 testing the process without any OAuth API keys. The 'test' option will go away
-once the server is run without the `debug` subcommand. Using the 'test' option,
-the next two sections can be done in any order.
+once the server is run without the `debug` subcommand.
+
+## Authentication Groups
+Most applications need more state information about a user than just whether
+they're logged in. For example, to do a closed beta, there needs to be a
+distinction betweeen a user that logged in versus one of the testers. Another
+common example is a remote file system where users can access or share private
+documents.
+
+The most general justification for a unified authentication/access control
+system is that any time a user accesses private data, they need to be allowed
+to. This by itself is a bad argument though, since, if users just need to access
+their own data, then their username is an easy substitute for their access
+group. Unfortunately, including user groups is a natural extension of the
+requirements in many cases.
+
+Access groups are organized as a disjoint set of [trees](
+https://en.wikipedia.org/wiki/Tree_(data_structure)), with permissions flowing
+downwards. This is backwards from the unix groups system, where access to each
+of the ancestor nodes is required to interact with a node. That being said, most
+file system sharing software (Google Drive, Dropbox, etc) uses a top down setup
+for permissions: access to a parent folder gives access to the files. In cases
+where a disconnect in permissions is needed, the client can symlink two group
+trees.
+
+The snippet below both requires a user to be logged in, as well as creates an
+access group the user needs to either own or join to see their profile.
+```python
+import flask
+from flask_modular_login import AccessNamespace
+from flask_modular_login import login_required
+
+app = flask.Flask(__name__)
+login_required.prefix = "//localhost:8000"
+
+group = AccessNamespace(
+    "test_group", ownership_method="test", owner_id="127.0.0.1")
+
+@app.route("/access_profile")
+@login_required(kw="user", group=group)
+def access_profile(user):
+    return str(user)
+
+if __name__ == "__main__":
+    app.run(port=8080)
+```
+
+By logging into the 'test' option named `127.0.0.1` (which should be the
+default), it is now possible to:
+- Invite people to `test_group`:
+[`http://localhost:8000/login/access/view/invite`](
+http://localhost:8000/login/access/view/invite)
+- Remove users from `test_group`:
+[`http://localhost:8000/login/access/view/remove`](
+http://localhost:8000/login/access/view/remove)
+- Revoke an invitation to `test_group`:
+[`http://localhost:8000/login/access/view/renege`](
+http://localhost:8000/login/access/view/renege)
+
+Group hierarchies are created using the `group` method, and can be composed
+using the binary operators `|` and `&` to indicate `or` and `and` respectively.
+For information on more than one group, use `+`, and to reference a subgroup by
+name, a `pathlib`-like `/` can be used. Groups can also be constructed based on
+arguments passed to the endpoint, including the user dictionary.
+
+For example, consider the (incomplete) example for accessing a user's
+groupchat-specific avatar
+```python
+group = AccessNamespace(
+    "private_chat", ownership_method="test", owner_id="127.0.0.1")
+
+@app.route("/icons/<gc>")
+@login_required(kw="user", group=lambda gc, user: group / gc / user["id"])
+def access_profile(gc, user):
+    ...
+```
 
 ## Adding OAuth Providers
 This project [currently](#todos) relies on
@@ -58,23 +126,9 @@ which maps the OAuth response to the platform-agnostic keys given to client
 projects. Remove unused providers from the `methods` dictionary, or add them in
 both `userlookup` and `methods`.
 
-### Serving via Unix Socket
 At this point, some providers may require a public facing URL to redirect to.
-With the default deployment, `uwsgi.ini` will serve requests from
-`run/uwsgi.sock`, relative to this project's root directory. The other important
-thing for the web server middleware is that only requests prefixed with `/login`
-should be passed to this process.
-
-Here is an example of a working Nginx setup where `socket` in `uwsgi.ini` has
-been modified to be `/tmp/flask_modular_login.sock`:
-```
-location = /login { rewrite ^ /login/; }
-location /login { try_files $uri @login; }
-location @login {
-        include uwsgi_params;
-        uwsgi_pass unix:/tmp/flask_modular_login.sock;
-}
-```
+For notes on deployment to public facing URLs, see the [Deployment](#deployment)
+section.
 
 ## Add Logging in to Projects
 In the project with a login requirement ('client'), install the local copy of
@@ -97,8 +151,9 @@ will be included in the example code below, but needs to be removed or updated
 when deploying to public facing URLs.
 
 For in the server code for the client project, login requirements can now be
-specified using `login_required` and `login_optional`. A demo of different
-features is below
+specified using `login_required` and `login_optional`. This login system was
+demonstrated briefly above, but a more complete walkthrough of the features is
+below
 ```python
 import flask
 from flask_modular_login import login_required, login_optional
@@ -208,6 +263,30 @@ open port on the login server.
 
 ### RemoteLoginInterface
 `pass`
+
+## Deployment
+Deployment requires `memcached` to be installed in the environment hosting the
+login service. Installation is OS dependant. The python virtual environment will
+be set up and started by the server script, so if it's already running in a
+container, you may prefer to uncomment the early exit from the setup function in
+`server.sh`.
+
+### Serving via Unix Socket
+With the default deployment, `uwsgi.ini` will serve requests from
+`run/uwsgi.sock`, relative to this project's root directory. The other important
+thing for the web server middleware is that only requests prefixed with `/login`
+should be passed to this process.
+
+Here is an example of a working Nginx setup where `socket` in `uwsgi.ini` has
+been modified to be `/tmp/flask_modular_login.sock`:
+```
+location = /login { rewrite ^ /login/; }
+location /login { try_files $uri @login; }
+location @login {
+        include uwsgi_params;
+        uwsgi_pass unix:/tmp/flask_modular_login.sock;
+}
+```
 
 ## Useful commands
 ```bash
