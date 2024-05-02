@@ -314,6 +314,9 @@ location @login {
 echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 -A `wc -l README.md | sed 's%[^0-9]%%g'` | tail -n +2)" | nl
 ```
+```bash
+find src -type f -name "*.py" | xargs wc | sort
+```
 
 ## Project Structure
 Rough, slightly outdated builder/interface boxes and "client login app" doesn't
