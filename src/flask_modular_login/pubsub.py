@@ -222,22 +222,25 @@ class Handshake:
         e = multiprocessing.Event()
         multiprocessing.Process(target=ws.run, args=(e,), daemon=True).start()
         e.wait()
+        return ws
 
 server_lobby = RouteLobby()
 
 class ServerBP(Handshake):
-    def __init__(self, db, *a, remote=None, root_path=None, **kw):
+    def __init__(self, db=None, *a, remote=None, root_path=None, **kw):
         super().__init__(root_path)
         self.db, self.a, self.kw = db, a, kw
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
         self.sock = (lambda: websockets.connect(remote)) if remote else \
             (lambda: websockets.unix_connect(self.server_unix_path))
         self.encoding = self.server_sync if remote else lambda x: x
-        server_lobby.register_lobby(self.bp, self)
+        if db is not None:
+            server_lobby.register_lobby(self.bp, self)
         self.keypair()
 
     def _fork(self):
-        super()._fork(ServerWS(*self.a, root_path=self.root_path(), **self.kw))
+        return super()._fork(
+            ServerWS(*self.a, root_path=self.root_path(), **self.kw))
 
     @server_lobby.route("/syn", methods=["POST"])
     def syn(self):
@@ -466,15 +469,15 @@ class ServerWS(WSHandshake):
         else:
             await self.remote_primary(ws, message)
 
-    async def main(self, e=None):
+    async def main(self, ready=None):
         async with websockets.serve(self.remote_router, self.host, self.port), \
                 websockets.unix_serve(self.local_router, self.server_unix_path):
-            if e is not None:
-                e.set()
+            if ready is not None:
+                ready.set()
             await asyncio.Future()
 
-    def run(self, e=None):
-        asyncio.run(self.main(e))
+    def run(self, ready=None):
+        asyncio.run(self.main(ready))
 
 callback = FunctionList()
 
@@ -529,7 +532,7 @@ class ClientWS(WSHandshake):
     def router(self, message):
         return self.revoke(message["data"])
 
-    async def listen(self, e=None):
+    async def listen(self, ready=None):
         q = asyncio.Queue()
         async def handler(ws):
             e = asyncio.Event()
@@ -549,8 +552,8 @@ class ClientWS(WSHandshake):
             remote, local = list(map(
                 asyncio.create_task, [notify.recv(), q.get()]))
             await asyncio.to_thread(self.update)
-            if e is not None:
-                e.set()
+            if ready is not None:
+                ready.set()
 
             while True:
                 done, pending = await asyncio.wait(
@@ -569,8 +572,8 @@ class ClientWS(WSHandshake):
                     event.set()
                     local = asyncio.create_task(q.get())
 
-    def run(self, e=None):
-        asyncio.run(self.listen(e))
+    def run(self, ready=None):
+        asyncio.run(self.listen(ready))
 
 class ClientBP(Handshake):
     def _closure(self, f):
@@ -594,7 +597,8 @@ class ClientBP(Handshake):
             return json.loads(await websocket.recv())
 
     def _fork(self):
-        super()._fork(ClientWS(*self.a, root_path=self.root_path(), **self.kw))
+        return super()._fork(
+            ClientWS(*self.a, root_path=self.root_path(), **self.kw))
 
 class SessionFromValueMixin:
     bp = None # unimplemented
@@ -674,8 +678,8 @@ class RemoteLoginBuilder(LoginBuilder):
             }
 
 class RemoteLoginInterface(RemoteLoginBuilder, SessionFromValueMixin):
-    def __init__(self, base_url, uri, app=None, root_path=None, g_attr="user"):
-        super().__init__(base_url, uri, app, root_path, g_attr)
+    def __init__(self, base_url, uri, app=None, root_path=None):
+        super().__init__(base_url, uri, app, root_path)
         self.session_loader = SessionLoader(root_path)
 
     _db = None
@@ -709,8 +713,27 @@ def repl(client):
         print(asyncio.run(client._send(message[0], **json.loads(message[1]))))
 
 if __name__ == "__main__":
-    ServerBP(None, host="localhost", port=8001)._fork()
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-    ws = ClientWS(base_url=base_url, uri="ws://localhost:8001")
-    ws.run()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'launching', choices=["client", "server", "all", "repl"])
+    parser.add_argument('--host-url', default="http://localhost:8000")
+    parser.add_argument('--ws-port', default=8001)
+    parser.add_argument('--ws-host', default="localhost")
+    args = parser.parse_args()
+
+    server_factory = ServerWS if args.launching == "server" else ServerBP
+    client_factory = ClientBP if args.launching == "repl" else ClientWS
+    server = server_factory(host=args.ws_host, port=args.ws_port)
+    client = client_factory(
+        base_url=args.host_url, uri=f"ws://{args.ws_host}:{args.ws_port}")
+
+    if args.launching == "server":
+        server.run()
+    elif args.launching in {"all", "repl"}:
+        server._fork()
+    if args.launching in {"client", "all"}:
+        client.run()
+    repl(client._fork())
 

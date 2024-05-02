@@ -144,8 +144,8 @@ $ pip install -e path/to/repo
 
 The client can either be on the same server as the login service ('local') or on
 a separate one ('remote'), and the server can be either Flask ('builder') or not
-('interface'). By default, project is assumed to be on the same server and
-written in Flask.
+('interface'). For naming purposes, the project is assumed to be on the same
+server and written in Flask by default.
 
 ### (Local)LoginBuilder
 When all the URLs are accessed via localhost loopback, the client and server
@@ -213,6 +213,14 @@ login_config = LoginBuilder(prefix="http://localhost:8000")
 login_required, login_optional = login_config.decorators
 ```
 
+## Websocket Interfaces
+The other methods for connecting to the login server rely on sockets to forward
+request information. In general, the websocket servers should be started using
+
+```bash
+$ python src/flask_modular_login/pubsub.py
+```
+
 ### LocalLoginInterface
 Python projects using web servers other than Flask are also supported, but have
 to specify a way to
@@ -261,15 +269,20 @@ if __name__ == '__main__':
 Another important option for load balancing is being able to have the login
 system as a separate service, only contacted when an access token lease needs to
 be refreshed or revoked (eg when the user logs out). In order to connect the
-login service with the client server, the client needs to be able to access an
-open port on the login server. In order to ensure the authenticity of the
-session cookie, the client also needs a copy of the `secret_key` used by Flask.
-By default, this is stored in `run/login_secret_session_key`.
+login service from the client server, the client needs to be able to access
 
-`[section still under construction]`
+- an open port on the login server
+  - by default, the server websocket is hosted on port 8001
+  - the port can be made accessable using SSH reverse tunneling to port forward
+- a copy of the `secret_key` used by Flask.
+  - by default, this is stored in `run/login_secret_session_key`
+- the base URL that the login service is hosted on
+  - this can be either the public URL or port forwarded
+  - used to coordinate shared secrets before opening the websocket connection
 
 ### RemoteLoginInterface
-`pass`
+Using frameworks other than Flask for a remote client requires the same
+information as above.
 
 ## Deployment
 Deployment requires `memcached` to be installed in the environment hosting the
@@ -284,14 +297,14 @@ With the default deployment, `uwsgi.ini` will serve requests from
 thing for the web server middleware is that only requests prefixed with `/login`
 should be passed to this process.
 
-Here is an example of a working Nginx setup where `socket` in `uwsgi.ini` has
-been modified to be `/tmp/flask_modular_login.sock`:
+Here is an example pulled from a working Nginx setup where `socket` in
+`uwsgi.ini` has been modified to be `/tmp/flask_modular_login.sock`:
 ```
 location = /login { rewrite ^ /login/; }
 location /login { try_files $uri @login; }
 location @login {
-        include uwsgi_params;
-        uwsgi_pass unix:/tmp/flask_modular_login.sock;
+    include uwsgi_params;
+    uwsgi_pass unix:/tmp/flask_modular_login.sock;
 }
 ```
 
@@ -302,7 +315,10 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 
 ## Project Structure
-Rough, slightly outdated and/or not built yet
+Rough, slightly outdated builder/interface boxes and "client login app" doesn't
+set the available platforms yet. The goal is to have the login server launched
+via `LoginBlueprint` and use the repo as a package so it doesn't have to be
+modified.
 ```
 +-------------+
 | access root |
@@ -378,7 +394,6 @@ Rough, slightly outdated and/or not built yet
 - login.gov integration might be a polite civil service
 - switch to python-social-auth
 - consider sql alchemy, prep database schema migration system
-- rewrite/restructure README to allow quickest start possible
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - check SQL indicies
 - caching in various places
