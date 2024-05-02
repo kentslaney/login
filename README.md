@@ -96,15 +96,16 @@ For information on more than one group, use `+`, and to reference a subgroup by
 name, a `pathlib`-like `/` can be used. Groups can also be constructed based on
 arguments passed to the endpoint, including the user dictionary.
 
-For example, consider the (incomplete) example for accessing a user's
-groupchat-specific avatar
+As a brief, incomplete example to showcase the usage, consider a messaging app
+where images can be unsent or users can be blocked altogether
 ```python
-group = AccessNamespace(
-    "private_chat", ownership_method="test", owner_id="127.0.0.1")
+chat = AccessNamespace("chat", ownership_method="test", owner_id="127.0.0.1")
 
-@app.route("/icons/<gc>")
-@login_required(kw="user", group=lambda gc, user: group / gc / user["id"])
-def access_profile(gc, user):
+@app.route("/chats/<DMing>/images/<img>")
+@login_required(kw="user", group=lambda DMing, user: \
+    !(chat / DMing / "blocked") & \
+    chat / DMing / user["id"] / img / "read_access")
+def access_profile(DMing, img, user):
     ...
 ```
 
@@ -397,6 +398,7 @@ modified.
 - horizontal scaling ([maybe?](https://github.com/vitessio/vitess))
 - check SQL indicies
 - caching in various places
+- API docs (doxygen?)
 - ...unit tests (hopefully higher up please)
 - get a security audit from someone else
 
