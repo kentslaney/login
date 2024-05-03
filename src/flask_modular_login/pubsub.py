@@ -227,9 +227,13 @@ class Handshake:
 server_lobby = RouteLobby()
 
 class ServerBP(Handshake):
-    def __init__(self, db=None, *a, remote=None, root_path=None, **kw):
+    def __init__(
+            self, db=None, host="localhost", port=8001, cache=None,
+            lease_timeout=3600*24, refresh_timeout=None, remote=None,
+            root_path=None):
         super().__init__(root_path)
-        self.db, self.a, self.kw = db, a, kw
+        self.a = (host, port, cache, lease_timeout, refresh_timeout)
+        self.db, self.timeouts = db, self.a[-2:]
         self.bp = flask.Blueprint("ws_handshake", __name__, url_prefix="/ws")
         self.sock = (lambda: websockets.connect(remote)) if remote else \
             (lambda: websockets.unix_connect(self.server_unix_path))
@@ -240,7 +244,7 @@ class ServerBP(Handshake):
 
     def _fork(self):
         return super()._fork(
-            ServerWS(*self.a, root_path=self.root_path(), **self.kw))
+            ServerWS(*self.a, root_path=self.root_path()))
 
     @server_lobby.route("/syn", methods=["POST"])
     def syn(self):
@@ -256,9 +260,13 @@ class ServerBP(Handshake):
         except:
             flask.abort(401)
         since = flask.request.args.get("since", 0)
-        return json.dumps(self.db().queryall(
-            "SELECT rowid, revoked_time, refresh, refresh_time "
-            "FROM revoked WHERE revoked_time>?", (since,)))
+        return json.dumps({
+            "action": "deauthorized",
+            "data": self.db().queryall(
+                "SELECT rowid, revoked_time, refresh, refresh_time "
+                "FROM revoked WHERE revoked_time>?", (since,)),
+            "timeouts": self.timeouts,
+        })
 
     async def send_deauthorize(self, row, revoked_time, refresh, refresh_time):
         async with self.sock() as websocket:
@@ -511,17 +519,26 @@ class ClientWS(WSHandshake):
         return self.public
 
     def update(self):
-        since = self.db().queryone("SELECT MAX(revoked_time) FROM revoked")[0]
-        data = requests.post(
+        since = self.db().queryone("SELECT MAX(revoked_time) FROM ignore")[0]
+        response = requests.post(
             self.url("/updates"), self.otp(),
             params=since and {"since": str(since)})
-        self.revoke(json.loads(data.content))
+        data = json.loads(response.content)
+        self.revoke(data["data"])
+        self.purge(*data["timeouts"])
 
     def revoke(self, info):
         # TODO: cache sync
         self.db().executemany(
             "INSERT INTO ignore(ref, revoked_time, refresh, refresh_time) "
             "VALUES (?, ?, ?, ?)", info)
+
+    def purge(self, lease_timeout, refresh_timeout):
+        now = time.time()
+        if lease_timeout is not None:
+            self.db().execute(
+                "DELETE FROM ignore WHERE refresh_time - ?>?",
+                (now, lease_timeout))
 
     async def io_hook(self, message, reply):
         # print(message, reply)

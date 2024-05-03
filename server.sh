@@ -54,6 +54,11 @@ case $1 in
     echo 'sh "'$BASE'/server.sh" $@' > "$BASE/env/bin/server"
     chmod u+x "$BASE/env/bin/server"
     ;;
+  ws)
+    setup
+    shift
+    python "$BASE/src/flask_modular_login/pubsub.py" $@
+    ;;
   help | *)
     echo "usage: server.sh [start | stop | help]"
     ;;
