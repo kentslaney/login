@@ -217,9 +217,10 @@ login_required, login_optional = login_config.decorators
 ## Websocket Interfaces
 The other methods for connecting to the login server rely on sockets to forward
 request information. In general, the websocket servers should be started using
+subcommands of
 
 ```bash
-$ python src/flask_modular_login/pubsub.py
+$ sh server.sh ws
 ```
 
 ### LocalLoginInterface
@@ -386,7 +387,6 @@ modified.
 ## TODOs
 - set the platforms via launch conditions
 - other language compat
-- build a use case
 - option to auto-redirect to QR code link on first login if not at /qr
 - linked accounts
 - check path interface consitency (pub/sub, memcached, secret_key)
