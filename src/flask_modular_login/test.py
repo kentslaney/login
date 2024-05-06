@@ -29,6 +29,7 @@ class TestBP(MonoBlueprint):
         if len(who) == 0:
             flask.abort(403)
         test.store.set(self, who)
+        # TODO: customizable fallback
         return flask.redirect(flask.request.args.get("next", "/"))
 
 def login():

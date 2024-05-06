@@ -3,8 +3,8 @@ import flask, uuid, collections, urllib.parse, time, json, datetime, qrcode, io
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from login import authorized
-from utils import RouteLobby, CompressedUUID, data_payload
+from tokens import authorized
+from utils import RouteLobby, CompressedUUID, data_payload, endpoint_next
 from group import AccessGroup, AccessGroupRef, GroupInfo, access_stack
 
 end_locals()
@@ -81,8 +81,7 @@ class AccessRoot:
 
     def bounce(self):
         if not authorized():
-            return flask.redirect(flask.url_for(
-                "modular_login.login", next=flask.request.url))
+            return flask.redirect(endpoint_next(self.redirect))
         return None
 
     def confirm(self, invite, url, **kw):

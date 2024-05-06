@@ -6,7 +6,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
 
 from store import FKDatabase, FKHeadless
 from utils import RouteLobby, relpath, project_path
-from login import DBStore, methods, authorized, safe_redirect
+from tokens import DBStore, methods, authorized, safe_redirect
 from access import AccessRoot
 
 end_locals()
@@ -17,6 +17,7 @@ class OAuthBlueprint(flask.Blueprint):
     _oauth_name = "modular_login"
     _credentials_paths = ((), ("run",))
     _oauth_run_path = ("run",)
+    _version = None # TODO
 
     def __init__(
             self, name=None, import_name=None, static_folder=None,
@@ -51,16 +52,18 @@ class OAuthBlueprint(flask.Blueprint):
             name: {"id": "", "secret": ""} for name in methods.keys()}
 
     @oauth_lobby.route("/")
-    def login(self):
+    def login_base_route(self):
         url = flask.request.args.get("next")
         if url is not None and not safe_redirect(url):
             flask.abort(400)
         if not authorized(): # only accessed in auth app's context
             url = {} if url is None else {"next": url}
             debug = all(i.debug for i in self._oauth_apps)
+            # method.login is a flask-dance interface
             return flask.render_template("login.html", debug=debug, **{
                 name: flask.url_for(method.name + ".login", **url)
                 for name, method in self._oauth_blueprints.items()})
+        # TODO: allow custom fallback endpoint
         return flask.redirect("/" if url is None else url)
 
     def _oauth_deauthorize(self, token, method, callback=None):
@@ -82,6 +85,7 @@ class OAuthBlueprint(flask.Blueprint):
             'CACHE_MEMCACHED_SERVERS': [project_path("run", "memcached.sock")],
             'CACHE_TYPE': 'utils.threaded_client'})
         stores, blueprints = {}, {}
+        # keep version out of redirect since that's provider facing
         for name, (_, factory, scope) in methods.items():
             stores[name] = DBStore(
                 db, name, cache, lambda: self.session(app),
@@ -94,7 +98,7 @@ class OAuthBlueprint(flask.Blueprint):
                 scope=scope
             )
             app.register_blueprint(
-                url_prefix="/login", blueprint=blueprints[name])
+                url_prefix=self.url_prefix, blueprint=blueprints[name])
 
         self._oauth_blueprints = blueprints
         self._oauth_stores = stores
@@ -102,9 +106,10 @@ class OAuthBlueprint(flask.Blueprint):
     @staticmethod
     def login_endpoint(app=None):
         app = app or flask.current_app
+        # TODO: why isn't this just a url_for call?
         return next(
             i.rule for i in app.url_map.iter_rules()
-            if i.endpoint == f"{OAuthBlueprint._oauth_name}.login")
+            if i.endpoint == f"{OAuthBlueprint._oauth_name}.login_base_route")
 
     @staticmethod
     def session(app):

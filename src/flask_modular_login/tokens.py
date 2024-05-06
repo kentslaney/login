@@ -50,7 +50,7 @@ def before_login(blueprint, url):
 def logged_in(blueprint, token):
     state = flask.request.args["state"]
     stored = get_next()
-    next_url = stored.pop(state, "/")
+    next_url = stored.pop(state, "/") # TODO: fallback URL here too
     store_next(stored)
     blueprint.token = token
     return flask.redirect(next_url)
@@ -125,7 +125,7 @@ class DBStore(BaseStorage):
             "(uuid, refresh, ip, authtime, refresh_time) "
             "VALUES (?, ?, ?, ?, ?)",
             (uniq, refresh, ip, authtime, authtime))
-        self.cache.set(refresh, (token, ip, authtime, authtime))
+        self.cache.set(refresh, (encoded, ip, authtime, authtime))
 
     def get(self, blueprint):
         db = self.db.begin()

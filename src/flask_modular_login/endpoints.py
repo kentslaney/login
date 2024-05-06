@@ -4,7 +4,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from interface import OAuthBlueprint
-from login import authorized
+from tokens import authorized
 from utils import RouteLobby
 from pubsub import ServerBP
 

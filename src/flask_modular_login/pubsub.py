@@ -9,7 +9,7 @@ import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
 from utils import project_path, RouteLobby, secret_key
-from login import refresh_access, default_timeouts, authorized
+from tokens import refresh_access, default_timeouts, authorized
 from group import AccessGroupRef
 from store import ThreadDB, FKDatabase
 from utils import relpath, dict_names
@@ -498,6 +498,7 @@ class ClientWS(WSHandshake):
         self._url = base_url
 
     def url(self, path, query=None):
+        # no versioning since it's on the back end
         return self._url + "/login/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
 

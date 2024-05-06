@@ -5,8 +5,8 @@ import flask
 import sys, os.path; end_locals, start_locals = lambda: sys.path.pop(0), (
     lambda x: x() or x)(lambda: sys.path.insert(0, os.path.dirname(__file__)))
 
-from utils import secret_key
-from login import authorized
+from utils import secret_key, endpoint_next
+from tokens import authorized
 from access import AccessGroup
 from interface import OAuthBlueprint
 
@@ -54,9 +54,7 @@ class LoginBuilder:
             # TODO: request access page? from whom?
             flask.abort(403)
         if flask.request.method == "GET":
-            return flask.redirect(
-                self.endpoint + "?" + urllib.parse.urlencode(
-                    {"next": redirect or flask.request.url}))
+            return flask.redirect(endpoint_next(self.endpoint, redirect))
         else:
             flask.abort(401)
 
@@ -129,19 +127,19 @@ class LoginBuilder:
             self.g = res
         bp.before_request(user_auth)
 
-    def login(
+    def login_merged(
             self, ambiguous=None, kw=None, group=None, redirect=None,
             required=True):
         if isinstance(ambiguous, AccessGroup):
             if group is not None:
                 raise TypeError(
-                    f"{__class__.__name__}.login()"
+                    f"{__class__.__name__}.login_*()"
                     " got multiple values for argument 'kw'")
             group, ambiguous = ambiguous, None
         if isinstance(ambiguous, str) or ambiguous is None or kw is not None:
             if ambiguous is not None and kw is not None:
                 raise TypeError(
-                    f"{__class__.__name__}.login()"
+                    f"{__class__.__name__}.login_*()"
                     " got multiple values for argument 'kw'")
             kw = ambiguous if kw is None else kw
             return self.decorate(kw, required, group, redirect)
@@ -154,11 +152,11 @@ class LoginBuilder:
 
     def login_required(
             self, ambiguous=None, kw=None, group=None, redirect=None):
-        return self.login(ambiguous, kw, group, redirect, True)
+        return self.login_merged(ambiguous, kw, group, redirect, True)
 
     def login_optional(
             self, ambiguous=None, kw=None, group=None, redirect=None):
-        return self.login(ambiguous, kw, group, redirect, False)
+        return self.login_merged(ambiguous, kw, group, redirect, False)
 
     @property
     def decorators(self):

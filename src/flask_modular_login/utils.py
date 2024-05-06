@@ -355,3 +355,7 @@ class OpShellTest(OpShell):
 # d = c
 # d |= a
 
+def endpoint_next(endpoint, redirect=None):
+    return endpoint + "?" + urllib.parse.urlencode(
+        {"next": redirect or flask.request.url})
+
