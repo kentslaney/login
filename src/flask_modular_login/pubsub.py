@@ -498,7 +498,7 @@ class ClientWS(WSHandshake):
         self._url = base_url
 
     def url(self, path, query=None):
-        # no versioning since it's on the back end
+        # version via port numbers
         return self._url + "/login/ws" + path + (
             "" if query is None else "?" + urllib.urlencode(query))
 

@@ -17,7 +17,8 @@ class OAuthBlueprint(flask.Blueprint):
     _oauth_name = "modular_login"
     _credentials_paths = ((), ("run",))
     _oauth_run_path = ("run",)
-    _version = None # TODO
+    # primarily for the sake of access group HTTP api endpoints
+    _version = None
 
     def __init__(
             self, name=None, import_name=None, static_folder=None,
@@ -27,6 +28,8 @@ class OAuthBlueprint(flask.Blueprint):
         import_name = __name__ if import_name is None else import_name
         root_path = project_path() if root_path is None else root_path
         url_prefix = "/login" if url_prefix is None else url_prefix
+        if self._version is not None:
+            url_prefix += "/" + self._version
         super().__init__(
             name, import_name, static_folder, static_url_path, template_folder,
             url_prefix, subdomain, url_defaults, root_path, cli_group)
