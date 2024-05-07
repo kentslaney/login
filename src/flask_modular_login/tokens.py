@@ -61,7 +61,7 @@ def authorized(session_=None):
     if method in methods:
         return methods[method][0].authorized
 
-default_timeouts = (3600*24, None)
+default_timeouts = (3600 * 24, None)
 
 # this needs to go through login server for remote calls
 def refresh_access(db, refresh, refresh_time, lease_timeout, cached):

@@ -17,7 +17,7 @@ end_locals()
 app = flask.Flask(__name__)
 app.config["SESSION_COOKIE_NAME"] = "login"
 app.wsgi_app = ProxyFix(app.wsgi_app)
-app.config["TIMEOUTS"] = (3600 * 24, 3600 * 24 * 90)
+# app.config["TIMEOUTS"] = (3600 * 24, 3600 * 24 * 90)
 
 class PermissionsWrapper(tuple):
     pass

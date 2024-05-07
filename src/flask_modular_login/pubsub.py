@@ -229,8 +229,8 @@ server_lobby = RouteLobby()
 class ServerBP(Handshake):
     def __init__(
             self, db=None, host="localhost", port=8001, cache=None,
-            lease_timeout=3600*24, refresh_timeout=None, remote=None,
-            root_path=None):
+            lease_timeout=default_timeouts[0],
+            refresh_timeout=default_timeouts[1], remote=None, root_path=None):
         super().__init__(root_path)
         self.a = (host, port, cache, lease_timeout, refresh_timeout)
         self.db, self.timeouts = db, self.a[-2:]
@@ -322,7 +322,8 @@ class SessionLoader(flask.sessions.SecureCookieSessionInterface, Handshake):
 class ServerWS(WSHandshake):
     def __init__(
             self, host="localhost", port=8001, cache=None,
-            lease_timeout=3600*24, refresh_timeout=None, *, root_path=None):
+            lease_timeout=default_timeouts[0],
+            refresh_timeout=default_timeouts[1], *, root_path=None):
         super().__init__(root_path)
         self.host, self.port = host, port
         self.cache, self.secondaries = cache, set()
