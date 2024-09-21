@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flask-modular-login"
-version = "0.1.0"
+description = "A modular login framework for Flask"
+version = "0.1.1"
 readme = "README.md"
 dependencies = [
     "wheel",
@@ -13,7 +14,7 @@ dependencies = [
     "blinker",
     "flask-caching",
     "uwsgi",
-    "libmc @ git+https://github.com/kentslaney/libmc",
+    "libmc",
     "cryptography",
     "requests",
     "websockets",

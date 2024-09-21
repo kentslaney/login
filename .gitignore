@@ -8,4 +8,5 @@ secret_key
 /build
 /run
 *.vim
+/dist
 
