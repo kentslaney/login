@@ -102,7 +102,7 @@ where images can be unsent or users can be blocked altogether
 chat = AccessNamespace("chat", ownership_method="test", owner_id="127.0.0.1")
 
 @app.route("/chats/<DMing>/images/<img>")
-@login_required(kw="user", group=lambda DMing, user: \
+@login_required(kw="user", group=lambda DMing, img, user: \
     !(chat / DMing / "blocked") & \
     chat / DMing / user["id"] / img / "read_access")
 def access_profile(DMing, img, user):
@@ -389,6 +389,7 @@ modified.
 - other language compat
 - option to auto-redirect to QR code link on first login if not at /qr
 - linked accounts
+- an option to use a personal invite link as an account
 - check path interface consitency (pub/sub, memcached, secret_key)
 - consistent indentation between if statements and others
 - purge access tokens from remote clients after they're stale
