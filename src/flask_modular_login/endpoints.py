@@ -38,8 +38,8 @@ class LoginBlueprint(OAuthBlueprint):
     def _oauth_kick(self, refresh):
         if not authorized():
             flask.abort(401)
-        self._oauth_deauthorize(
-            refresh, flask.session["method"], flask.session["user"])
+        self._oauth_deauthorize(refresh, flask.session["method"])
+        return ""
 
     @login_lobby.template_json("/sessions", "sessions.html")
     def _oauth_sessions(self):

@@ -277,7 +277,7 @@ class ServerBP(Handshake):
     def deauthorize(self, *a, **kw):
         try:
             asyncio.run(self.send_deauthorize(*a, **kw))
-        except ConnectionRefusedError:
+        except (ConnectionRefusedError, FileNotFoundError):
             pass
 
 class WSHandshake(Handshake):
