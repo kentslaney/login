@@ -1,4 +1,4 @@
-import os.path, functools, collections, flask
+import os.path, functools, collections, flask, urllib
 
 def relpath(*args):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
