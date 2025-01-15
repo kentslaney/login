@@ -59,6 +59,7 @@ def authorized(session_=None):
     session_ = session_ or flask.session
     method = session_.get("method", None)
     if method in methods:
+        flask.g.login_session = session_
         return methods[method][0].authorized
 
 default_timeouts = (3600 * 24, None)
@@ -128,8 +129,8 @@ class DBStore(BaseStorage):
         self.cache.set(refresh, (encoded, ip, authtime, authtime))
 
     def get(self, blueprint):
-        db = self.db.begin()
-        session_, info = self.session(), None
+        db, info = self.db.begin(), None
+        session_ = flask.g.get("login_session", None) or self.session()
         if "refresh" not in session_:
             return None
 

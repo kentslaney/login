@@ -58,7 +58,7 @@ class OAuthBlueprint(flask.Blueprint):
     def login_base_route(self):
         url = flask.request.args.get("next")
         if url is not None and not safe_redirect(url):
-            flask.abort(400)
+            flask.abort(400, description="unsafe redirect")
         if not authorized(): # only accessed in auth app's context
             url = {} if url is None else {"next": url}
             debug = all(i.debug for i in self._oauth_apps)
