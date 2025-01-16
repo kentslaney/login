@@ -81,7 +81,8 @@ class AccessRoot:
 
     def bounce(self):
         if not authorized():
-            return flask.redirect(endpoint_next(self.redirect))
+            redirect = self.redirect(flask.current_app)
+            return flask.redirect(endpoint_next(redirect))
         return None
 
     def confirm(self, invite, url, **kw):
