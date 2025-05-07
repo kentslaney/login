@@ -94,8 +94,9 @@ class AccessGroup(InfoShell):
                 invite = str(uuid.uuid4())
                 db.execute(
                     "INSERT INTO invitations"
-                    "(invite, accessing, inviter, depletes, deauthorizes) "
-                    "VALUES (?, ?, NULL, FALSE, 2)", (invite, self.uuid))
+                    "(invite, accessing, inviter, depletes, deauthorizes, "
+                    "invitees) VALUES (?, ?, NULL, FALSE, 2, NULL)",
+                    (invite, self.uuid))
                 db.execute(
                     "INSERT INTO user_groups"
                     "(guild, via, member, access_group, spots) "
