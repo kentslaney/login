@@ -8,4 +8,5 @@ cryptography
 requests
 websockets
 qrcode
+pillow
 
