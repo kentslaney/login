@@ -16,7 +16,7 @@ Python applications.
 ## Starting the Login Service
 Start the login service on port 8000 with
 ```bash
-$ sh server.sh debug
+$ . server.sh debug
 ```
 
 If you go to [`http://localhost:8000/login/view/sessions`](
@@ -317,6 +317,9 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 ```
 ```bash
 find src -type f -name "*.py" | xargs wc | sort
+```
+```bash
+. server.sh help
 ```
 
 ## Project Structure

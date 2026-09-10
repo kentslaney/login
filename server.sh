@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 BASE="$( dirname -- '$0' )"
 
 setup () {

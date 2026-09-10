@@ -46,11 +46,18 @@ class OAuthBlueprint(flask.Blueprint):
 
     def _get_oauth_keys(self):
         for rel in self._credentials_paths:
-            path = os.path.join(self._oauth_run_root, *rel, "credentials.json")
+            path = os.path.join(self._oauth_root_path, *rel, "credentials.json")
             if os.path.exists(path):
+                #print(f"loading credentials.json from {path}")
                 with open(path) as f:
                     self._oauth_keys = json.load(f)
                 return
+
+        attempted = lambda a: os.path.join(*a) if a else ""
+        print(
+            f"failed to find credentials.json in {self._oauth_root_path}/"
+            f"{{{','.join(map(attempted, self._credentials_paths))}}}/"
+            "credentials.json")
         self._oauth_keys = {
             name: {"id": "", "secret": ""} for name in methods.keys()}
 
@@ -90,6 +97,10 @@ class OAuthBlueprint(flask.Blueprint):
         stores, blueprints = {}, {}
         # keep version out of redirect since that's provider facing
         for name, (_, factory, scope) in methods.items():
+            if name not in self._oauth_keys:
+                if name != "test":
+                    print(f"skipping platform {name}")
+                continue
             stores[name] = DBStore(
                 db, name, cache, lambda: self.session(app),
                 *app.config.get("TIMEOUTS", ()))

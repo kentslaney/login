@@ -1,4 +1,4 @@
-import os.path, functools, collections, flask, urllib
+import os.path, functools, collections, flask, urllib, inspect
 
 def relpath(*args):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), *args)
@@ -12,9 +12,11 @@ from flask_caching.backends.memcache import MemcachedCache
 
 # TODO: why does this seemingly work without the server running?
 class ThreadedMemcached(MemcachedCache):
-    def import_preferred_memcache_lib(self, servers):
-        import libmc
-        return libmc.ThreadedClient(servers, hash_fn=libmc.MC_HASH_FNV1_32)
+    def import_preferred_memcache_lib(self, *a, **kw):
+        fn = super().import_preferred_memcache_lib
+        bound = inspect.signature(fn).bind(*a, **kw)
+        bound.arguments["memcache_client_lib"] = "libmc"
+        return fn(*bound.args, **bound.kwargs)
 
 def threaded_client(app, config, args, kwargs):
     return ThreadedMemcached.factory(app, config, args, kwargs)
