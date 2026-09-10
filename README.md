@@ -296,7 +296,7 @@ the python client command at the end should do nothing for more 10 seconds
 with the nginx config
 
 ```
-location = /attached { rewrite ^ /attached/; }
+location = /attached { return 302 /attached/$is_args$args; }
 location /attached { try_files $uri @attached; }
 location @attached {
     rewrite  ^/attached/(.*) /$1 break;
