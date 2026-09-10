@@ -16,7 +16,7 @@ Python applications.
 ## Starting the Login Service
 Start the login service on port 8000 with
 ```bash
-$ . server.sh debug
+bash server.sh debug
 ```
 
 If you go to [`http://localhost:8000/login/view/sessions`](
@@ -140,7 +140,7 @@ section.
 In the project with a login requirement ('client'), install the local copy of
 this repo using
 ```bash
-$ pip install -e path/to/repo
+pip install -e path/to/repo
 ```
 
 The client can either be on the same server as the login service ('local') or on
@@ -220,7 +220,7 @@ request information. In general, the websocket servers should be started using
 subcommands of
 
 ```bash
-$ sh server.sh ws
+bash server.sh ws
 ```
 
 ### LocalLoginInterface
@@ -282,6 +282,47 @@ login service from the client server, the client needs to be able to access
   - this can be either the public URL or port forwarded
   - used to coordinate shared secrets before opening the websocket connection
 
+```bash
+ssh -L 8001:localhost:8001 kent@slaney.org "bash ~/kent.slaney.org/login/server.sh ws server"
+```
+```bash
+git submodule add git@github.com:kentslaney/login.git
+pip install -e login
+scp kent@slaney.org:kent.slaney.org/login/run/login_secret_session_key kent@slaney.org:kent.slaney.org/login/run/public.pem login/run
+python login/src/flask_modular_login/pubsub.py client --host-url https://kent.slaney.org
+```
+the python client command at the end should do nothing for more 10 seconds
+
+with the nginx config
+
+```
+location = /attached { rewrite ^ /attached/; }
+location /attached { try_files $uri @attached; }
+location @attached {
+    rewrite  ^/attached/(.*) /$1 break;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_pass http://localhost:8081;
+}
+```
+
+after running a server using `RemoteLoginBuilder` on port 8080 or, for testing
+
+```bash
+python3 -m http.server 8080
+```
+```bash
+ssh -f -N -R 8081:localhost:8080 kent@slaney.org
+```
+
+will cause requests to `https://kent.slaney.org/attached` to be forwarded to a
+server with potential access to the subdomain's oauth login info.
+
 ### RemoteLoginInterface
 Using frameworks other than Flask for a remote client requires the same
 information as above.
@@ -319,7 +360,7 @@ echo "$(grep TODO -r src && grep '^#\+ TODO' README.md \
 find src -type f -name "*.py" | xargs wc | sort
 ```
 ```bash
-. server.sh help
+bash server.sh help
 ```
 
 ## Project Structure

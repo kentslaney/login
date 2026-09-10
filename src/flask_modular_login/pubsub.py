@@ -594,6 +594,12 @@ class ClientWS(WSHandshake):
     def run(self, ready=None):
         asyncio.run(self.listen(ready))
 
+class ClientPassive(ClientWS):
+    def db(self):
+        res = super().db()
+        res.ensure()
+        return res
+
 class ClientBP(Handshake):
     def _closure(self, f):
         sig = inspect.signature(f)
@@ -743,7 +749,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     server_factory = ServerWS if args.launching == "server" else ServerBP
-    client_factory = ClientBP if args.launching == "repl" else ClientWS
+    client_factory = ClientBP if args.launching == "repl" else ClientPassive
     server = server_factory(host=args.ws_host, port=args.ws_port)
     client = client_factory(
         base_url=args.host_url, uri=f"ws://{args.ws_host}:{args.ws_port}")

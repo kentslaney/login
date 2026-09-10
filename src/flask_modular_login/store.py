@@ -168,8 +168,8 @@ class HeadlessDB:
         self.schema, self.init, self.debug = schema, init, debug
 
         self._g, self.app = None, type("resource_app", (), {
-            "open_resource": open, "app_context": contextlib.contextmanager(
-                lambda: iter([None]))})()
+            "open_resource": open, "app_context": staticmethod(
+                contextlib.contextmanager(lambda: iter([None])))})()
         self.many = [self.queryone, self.queryall]
 
     def ensure(self):
