@@ -206,7 +206,8 @@ class AccessGroupRef(AccessGroup):
                     self.db(),
                     "SELECT access_id FROM access_groups WHERE group_name=?",
                     "SELECT n AS uuid FROM supersets", (self.qualname,))
-                assert len(self._stack) > 0
+                if len(self._stack) == 0:
+                    raise LookupError("group not found")
                 self._uuid = self._stack[0].uuid
             else:
                 self._stack = access_stack(

@@ -384,8 +384,12 @@ class ServerWS(WSHandshake):
 
     @actionable
     def access_query(self, user, access_group, sep='/'):
-        return dict_names(AccessGroupRef.reconstruct(
-            self.db, access_group, sep).vet(user))
+        try:
+            return dict_names(AccessGroupRef.reconstruct(
+                self.db, access_group, sep).vet(user))
+        except LookupError as e:
+            print(f"queried group {access_group} not found")
+            return {}
 
     @actionable
     def ensure_access(self, access_group, sep='/', owner=None):
@@ -663,7 +667,10 @@ class RemoteLoginBuilder(LoginBuilder):
             "TIMEOUTS", default_timeouts)
 
     def membership(self, group, user):
-        return self.bp.access_query(user, group)
+        res = asyncio.run(self.bp.access_query(user, group.qualname))
+        if not res:
+            raise LookupError("group not found on remote")
+        return res
 
     _db = None
     @property
