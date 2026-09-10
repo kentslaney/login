@@ -1,5 +1,5 @@
 #!/bin/bash
-BASE="$( dirname -- '$0' )"
+BASE=$(dirname "$(realpath "$0")")
 
 setup () {
   # return
