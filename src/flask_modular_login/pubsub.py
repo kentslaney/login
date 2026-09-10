@@ -668,8 +668,8 @@ class RemoteLoginBuilder(LoginBuilder):
 
     def membership(self, group, user):
         res = asyncio.run(self.bp.access_query(user, group.qualname))
-        if not res:
-            raise LookupError("group not found on remote")
+        if res == {}:
+            raise LookupError(f"group {group.qualname} not found on remote")
         return res
 
     _db = None
