@@ -260,7 +260,7 @@ class Database(HeadlessDB):
     def __init__(self, app, database, schema, init=[], debug=False):
         super().__init__(database, schema, init, debug)
         self.app, self._g = app, flask.g
-        if app != flask.current_app:
+        if not flask.has_app_context() or app != flask.current_app:
             app.teardown_appcontext(lambda e: self.close())
         self.ensure()
 
